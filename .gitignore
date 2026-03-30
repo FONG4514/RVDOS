@@ -1,0 +1,7 @@
+*.img
+*.txt
+*.o
+kernel.elf
+kernel.asm
+qemu.log
+build_user/
