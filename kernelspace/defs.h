@@ -113,6 +113,8 @@ typedef struct user_context {
 #define SYS_READ_FILE     16
 #define SYS_WRITE_FILE    17
 #define SYS_CLOSE_HANDLE  18
+#define SYS_WAIT          19
+#define SYS_LS            20
 
 #define MAX_HANDLES 16
 #define STDOUT 1
@@ -160,6 +162,7 @@ PCB*            myproc(void);
 void            swtch(struct context*, struct context*);
 void            exit(int status);
 int             spawn(char *path);
+int             wait(int pid);
 void            forkret(void);
 
 // mylibc.c
@@ -168,6 +171,7 @@ void*           memset(void *dst, int c, uint n);
 int             memcmp(const void *v1, const void *v2, uint n);
 
 // pagetable.c
+extern pagetable_t kernel_pagetable;
 void            kvminit();
 void            kvminithart();
 int             mappages(pagetable_t, uint64, uint64, uint64, int);

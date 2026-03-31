@@ -33,6 +33,8 @@ typedef int32              pid_t;
 #define SYS_READ_FILE     16
 #define SYS_WRITE_FILE    17
 #define SYS_CLOSE_HANDLE  18
+#define SYS_WAIT          19
+#define SYS_LS            20
 
 // function
 handle_t file_open(const char *path);
@@ -43,6 +45,8 @@ void     exit_process(int32 status);
 uint32   get_ticks(void);
 pid_t    get_pid(void);
 pid_t    spawn_process(const char *path);
+int32    wait_process(pid_t pid);
+void     ls(void);
 
 uint32   strlen(const char *s);
 void     print_str(const char *s);

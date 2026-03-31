@@ -10,6 +10,7 @@ extern void user_vector();
 extern void user_ret(uint64, uint64);
 extern void fast_user_vector();
 extern int console_read(uint8 *buf, int n);
+extern void uart_putc_no_lock(char c);
 
 uint64 ticks = 0;
 spinlock_t tick_lock;
@@ -109,17 +110,22 @@ uint64 sys_read_file(void) {
     uint8 *buf = (uint8*)p->context->a1;
     uint32 len = (uint32)p->context->a2;
     
-    uint64 old_sstatus = r_sstatus();
-    w_sstatus(old_sstatus | SSTATUS_SUM);
-    
     uint64 ret;
     if (handle == 0) { // STDIN
+        // console_read may sleep, which clears sstatus.SUM on some implementations
+        // but more importantly, we must ensure it's set when we actually access buf.
+        // We'll modify console_read to be SUM-aware if needed, but for now
+        // we keep it here and hope context switch restores sstatus (it usually does not
+        // unless explicitly saved).
+        w_sstatus(r_sstatus() | SSTATUS_SUM);
         ret = console_read(buf, len);
+        w_sstatus(r_sstatus() & ~SSTATUS_SUM);
     } else {
+        w_sstatus(r_sstatus() | SSTATUS_SUM);
         ret = ReadFile(handle, buf, len);
+        w_sstatus(r_sstatus() & ~SSTATUS_SUM);
     }
     
-    w_sstatus(old_sstatus);
     return ret;
 }
 
@@ -154,10 +160,20 @@ uint64 sys_spawn(void) {
     return spawn(kpath);
 }
 
+uint64 sys_wait(void) {
+    PCB *p = myproc();
+    int pid = (int)p->context->a0;
+    return wait(pid);
+}
+
+uint64 sys_ls(void) {
+    fs_ls();
+    return 0;
+}
+
 uint64 sys_exit(void) {
     PCB *p = myproc();
     int status = (int)p->context->a0;
-    printf("Process %d exiting with status %d\n", p->pid, status);
     exit(status);
     return 0; // Does not reach here
 }
@@ -172,15 +188,16 @@ uint64 sys_write_file(void) {
     uint8 *buf = (uint8*)p->context->a1;
     uint32 len = (uint32)p->context->a2;
     
-    // In xv6 style, we'd use copyin to get data from user space.
-    // Here we assume buf is in user space and we might need SSTATUS_SUM.
     uint64 old_sstatus = r_sstatus();
     w_sstatus(old_sstatus | SSTATUS_SUM);
     
     if (handle == STDOUT || handle == STDERR) {
+        extern spinlock_t uart_lock;
+        accquire_lock(&uart_lock);
         for (uint32 i = 0; i < len; i++) {
-            uart_putc(buf[i]);
+            uart_putc_no_lock(buf[i]);
         }
+        release_lock(&uart_lock);
         w_sstatus(old_sstatus);
         return len;
     }
@@ -200,6 +217,8 @@ syscall_t syscall_table[64] = {
     [SYS_READ_FILE]    = sys_read_file,
     [SYS_WRITE_FILE]   = sys_write_file,
     [SYS_CLOSE_HANDLE] = sys_close_handle,
+    [SYS_WAIT]         = sys_wait,
+    [SYS_LS]           = sys_ls,
 };
 
 void syscall_dispatcher(void) {

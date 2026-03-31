@@ -66,10 +66,15 @@ PCB* allocproc(void) {
 found:
   p->pid = allocpid();
   p->state = SLEEPING;
+  p->chan = 0;          // CRITICAL: Clear chan to avoid premature wakeup
   p->exit_status = 0;
+  p->sz = 0;
 
   // Initialize handles
-  for(int i = 0; i < MAX_HANDLES; i++) {
+  for(int i = 0; i < 3; i++) {
+    p->handles[i] = (file_t *)-1; // Special value for standard handles
+  }
+  for(int i = 3; i < MAX_HANDLES; i++) {
     p->handles[i] = 0;
   }
 
@@ -120,9 +125,18 @@ void scheduler(void) {
           p->state = RUNNING;
           c->proc = p;
           
+          // Switch to process's page table
+          uint64 satp = (8L << 60) | ((uint64)p->pagetable >> 12);
+          w_satp(satp);
+          sfence_vma();
+
           swtch(&c->context, &p->sched_ctx);
 
           // Process is done running for now.
+          // Switch back to kernel page table
+          w_satp((8L << 60) | ((uint64)kernel_pagetable >> 12));
+          sfence_vma();
+
           c->proc = 0;
         }
         release_lock(&p->lock);
@@ -214,9 +228,48 @@ void exit(int status) {
   p->exit_status = status;
   p->state = ZOMBIE;
 
+  wakeup(&proc_pool); // Wake up anyone waiting for a process to exit
+
   // Jump into the scheduler, never to return.
   sched();
   panic("zombie exit");
+}
+
+int wait(int pid) {
+  PCB *p;
+  int found;
+
+  accquire_lock(&proc_pool.lock);
+  for(;;){
+    found = 0;
+    for(p = procs; p < &procs[64]; p++){
+      if(p->pid == pid){
+        found = 1;
+        accquire_lock(&p->lock);
+        if(p->state == ZOMBIE){
+          int status = p->exit_status;
+          p->state = UNUSED;
+          p->pid = 0;
+          // In a real OS, we would free the page table and trapframe here
+          // kfree(p->context);
+          // uvmfree(p->pagetable, p->sz);
+          release_lock(&p->lock);
+          release_lock(&proc_pool.lock);
+          return status;
+        }
+        release_lock(&p->lock);
+        break;
+      }
+    }
+
+    if(!found){
+      release_lock(&proc_pool.lock);
+      return -1;
+    }
+
+    // Wait for a process to exit
+    sleep(&proc_pool, &proc_pool.lock);
+  }
 }
 
 // Create a new process, load code from file, and start it.

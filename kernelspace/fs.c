@@ -134,7 +134,7 @@ int FS_CODE virtio_disk_init() {
   status |= VIRTIO_STATUS_DRIVER_OK;
   *REG_V(VIRTIO_MMIO_STATUS) = status;
   
-  printf("virtio_disk_init: Legacy Mode success. PFN=0x%x\n", ((uint64)p) >> 12);
+  printf("virtio_disk_init: Legacy Mode");
   return 0;
 }
 
@@ -198,7 +198,7 @@ int FS_CODE disk_read(uint32 sector, uint8 *buf, uint32 count) {
 
   // 7. 成功后打印 FAT32 关键特征进行验证
   if(sector == 0) {
-      printf("[VirtIO Success] Sector 0 Read. Magic: 0x%x%x (Expected 0x55aa)\n", 
+      printf("Sector 0 Read. Magic: 0x%x%x (Expected 0x55aa) ", 
               buf[510], buf[511]);
       printf("OEM ID: %.8s\n", &buf[3]);
   }
@@ -465,7 +465,9 @@ int FS_CODE ReadFile(int handle, uint8 *buf, uint32 len) {
 void FS_CODE CloseHandle(int handle) {
     PCB *p = myproc();
     if(handle >= 0 && handle < MAX_HANDLES && p->handles[handle]) {
-        file_free(p->handles[handle]);
+        if (p->handles[handle] != (file_t *)-1) {
+            file_free(p->handles[handle]);
+        }
         p->handles[handle] = 0;
     }
 }
@@ -481,7 +483,6 @@ void FS_CODE fs_ls() {
     }
 
     FAT32_DirEntry *entry = (FAT32_DirEntry*)fs.cache_page;
-    printf("Listing files in root:\n");
     for (int i = 0; i < SECTOR_SIZE / sizeof(FAT32_DirEntry); i++) {
         if (entry[i].name[0] == 0) break;
         if (entry[i].name[0] == 0xE5) continue;

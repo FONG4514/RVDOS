@@ -4,6 +4,7 @@ void help() {
     print_str("Available commands:\n");
     print_str("  help         - Show this help message\n");
     print_str("  echo [str]   - Print string to screen\n");
+    print_str("  ls           - List files in root directory\n");
     print_str("  cat [file]   - Display file contents\n");
     print_str("  clear        - Clear the screen (simulated)\n");
     print_str("  exit         - Exit the shell\n");
@@ -29,13 +30,6 @@ void cat(const char *path) {
     close_handle(h);
 }
 
-// TODO: fix bug
-// cat无法正常工作，子进程的命令也不能正常工作，如：
-// Unknown command or failed to execute: xtxtx
-// $ 
-// Unknown command or failed to execute: e
-// $ 
-
 void main() {
     char buf[128];
 
@@ -56,6 +50,8 @@ void main() {
 
         if (strcmp(buf, "help") == 0) {
             help();
+        } else if (strcmp(buf, "ls") == 0) {
+            ls();
         } else if (strcmp(buf, "clear") == 0) {
             for(int i = 0; i < 50; i++) print_str("\n");
         } else if (strncmp(buf, "echo ", 5) == 0) {
@@ -69,13 +65,12 @@ void main() {
             // Try to spawn the command as a process
             pid_t pid = spawn_process(buf);
             if (pid < 0) {
-                print_str("Unknown command or failed to execute: ");
+                print_str("Unknown command: ");
                 print_str(buf);
                 print_str("\n");
             } else {
-                print_str("Started process ");
-                print_int(pid);
-                print_str("\n");
+                // Wait for the process to exit
+                wait_process(pid);
             }
         }
     }

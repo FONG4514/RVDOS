@@ -1,4 +1,5 @@
 #include <stdarg.h>
+#include "riscv.h"
 #include "defs.h"
 #define UART0 0x10000000L
 #define REG(reg) ((volatile unsigned char *)(UART0 + reg))
@@ -104,7 +105,14 @@ int console_read(uint8 *buf, int n) {
       if(i > 0) cons.r--; // Save Ctrl-D for next read
       break;
     }
+    
+    // buf is a user-space address. Ensure SUM is set.
+    // Although the syscall wrapper sets it, sleep() might have cleared it.
+    uint64 old_sstatus = r_sstatus();
+    w_sstatus(old_sstatus | SSTATUS_SUM);
     buf[i] = c;
+    w_sstatus(old_sstatus);
+
     if(c == '\n') {
       i++;
       break;

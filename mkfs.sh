@@ -25,21 +25,21 @@ dd if=/dev/zero of=${IMG_NAME} bs=1M count=${IMG_SIZE_MB} status=none
 # -F 32 指定 FAT32, -S 512 指定扇区大小
 mkfs.fat -F 32 -S 512 ${IMG_NAME} > /dev/null
 
-# 3. 编译用户态程序
+# 编译用户态程序
 echo "正在编译用户态程序..."
 mkdir -p ${BUILD_DIR}
 
 CC="riscv64-linux-gnu-gcc"
 CFLAGS="-Wall -O0 -ffreestanding -nostdlib -fno-common -mcmodel=medany -mno-relax -march=rv64gc -mabi=lp64 -I."
 
-# 编译
+# 编译所有 c 文件并链接
 ${CC} ${CFLAGS} -c ${USER_DIR}/rvlibc.c -o ${BUILD_DIR}/rvlibc.o
 ${CC} ${CFLAGS} -c ${USER_DIR}/shell.c -o ${BUILD_DIR}/shell.o
 
-# 链接：使用 linker script 确保 _start 在 0x0
+# 链接：必须包含 rvlibc.o 才能使用 wait_process 等新函数
 ${CC} ${CFLAGS} -T ${USER_DIR}/user.ld -nostartfiles ${BUILD_DIR}/rvlibc.o ${BUILD_DIR}/shell.o -o ${BUILD_DIR}/shell.elf
 
-# 转换为纯二进制文件
+# 转换为纯二进制文件，剥离 ELF 头，让内核直接加载代码
 riscv64-linux-gnu-objcopy -S -O binary ${BUILD_DIR}/shell.elf ${BUILD_DIR}/shell
 
 # 4. 将文件塞入镜像

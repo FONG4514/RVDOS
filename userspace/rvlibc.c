@@ -60,6 +60,14 @@ pid_t spawn_process(const char *path) {
     return (pid_t)syscall(SYS_SPAWN, (uint64)path, 0, 0);
 }
 
+int32 wait_process(pid_t pid) {
+    return (int32)syscall(SYS_WAIT, (uint64)pid, 0, 0);
+}
+
+void ls(void) {
+    syscall(SYS_LS, 0, 0, 0);
+}
+
 // --- 基础工具函数 ---
 
 int strcmp(const char *p, const char *q) {
@@ -104,7 +112,9 @@ void print_str(const char *s) {
 
 void print_int(int32 n) {
     char buf[16];
+    char out[16];
     int32 i = 0;
+    int32 j = 0;
     
     if (n == 0) {
         print_str("0");
@@ -112,7 +122,7 @@ void print_int(int32 n) {
     }
     
     if (n < 0) {
-        print_str("-");
+        out[j++] = '-';
         n = -n;
     }
     
@@ -122,7 +132,8 @@ void print_int(int32 n) {
     }
     
     while (--i >= 0) {
-        char c = buf[i];
-        file_write(STDOUT, &c, 1);
+        out[j++] = buf[i];
     }
+    
+    file_write(STDOUT, out, j);
 }
