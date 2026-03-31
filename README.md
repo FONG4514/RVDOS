@@ -22,7 +22,7 @@ bash mkfs.sh
 make run
 ```
 
-## 📂 项目结构
+## 项目结构
 
 - `kernelspace/`: 内核源代码
   - `main.c`: 内核入口与初始化
