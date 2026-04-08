@@ -1,5 +1,6 @@
 #include "riscv.h"
 #include "defs.h"
+#include "proc.h"
 
 struct trap_info {
     spinlock_t trap_lock;
@@ -86,6 +87,7 @@ typedef uint64 (*syscall_t)(void);
 uint64 sys_create_file(void) {
     PCB *p = myproc();
     char *path = (char*)p->context->a0;
+    int mode = (int)p->context->a1;
     if (path == 0) return -1;
 
     char kpath[64];
@@ -101,7 +103,7 @@ uint64 sys_create_file(void) {
     kpath[i] = '\0';
     
     w_sstatus(old_sstatus);
-    return CreateHandler(kpath);
+    return CreateHandler(kpath, mode);
 }
 
 uint64 sys_read_file(void) {
@@ -110,13 +112,10 @@ uint64 sys_read_file(void) {
     uint8 *buf = (uint8*)p->context->a1;
     uint32 len = (uint32)p->context->a2;
     
+    if (handle < 0 || handle >= MAX_HANDLES || p->handles[handle] == 0) return -1;
+
     uint64 ret;
-    if (handle == 0) { // STDIN
-        // console_read may sleep, which clears sstatus.SUM on some implementations
-        // but more importantly, we must ensure it's set when we actually access buf.
-        // We'll modify console_read to be SUM-aware if needed, but for now
-        // we keep it here and hope context switch restores sstatus (it usually does not
-        // unless explicitly saved).
+    if (p->handles[handle] == (file_t *)-1) { // Standard Console
         w_sstatus(r_sstatus() | SSTATUS_SUM);
         ret = console_read(buf, len);
         w_sstatus(r_sstatus() & ~SSTATUS_SUM);
@@ -143,9 +142,11 @@ uint64 sys_get_ticks(void) {
 uint64 sys_spawn(void) {
     PCB *p = myproc();
     char *path = (char*)p->context->a0;
+    char *redir = (char*)p->context->a1;
     if (path == 0) return -1;
 
     char kpath[64];
+    char kredir[64];
     uint64 old_sstatus = r_sstatus();
     w_sstatus(old_sstatus | SSTATUS_SUM);
     
@@ -155,9 +156,17 @@ uint64 sys_spawn(void) {
         if(kpath[i] == '\0') break;
     }
     kpath[i] = '\0';
+
+    if (redir) {
+        for(i = 0; i < 63; i++) {
+            kredir[i] = redir[i];
+            if(kredir[i] == '\0') break;
+        }
+        kredir[i] = '\0';
+    }
     
     w_sstatus(old_sstatus);
-    return spawn(kpath);
+    return spawn(kpath, redir ? kredir : 0);
 }
 
 uint64 sys_wait(void) {
@@ -188,22 +197,47 @@ uint64 sys_write_file(void) {
     uint8 *buf = (uint8*)p->context->a1;
     uint32 len = (uint32)p->context->a2;
     
+    if (handle < 0 || handle >= MAX_HANDLES || p->handles[handle] == 0) return -1;
+
+    // Standard Output/Error
+    if (p->handles[handle] == (file_t *)-1) {
+        uint64 old_sstatus = r_sstatus();
+        w_sstatus(old_sstatus | SSTATUS_SUM);
+        extern int WriteFile(int, uint8*, uint32);
+        uint64 ret = WriteFile(handle, buf, len);
+        w_sstatus(old_sstatus);
+        return ret;
+    }
+
+    // For disk files, we MUST copy data to kernel space because 
+    // VirtIO uses physical addresses (identity mapping) and cannot see user VA.
+    if (len > PGSIZE) len = PGSIZE; // Limit single write to one page for simplicity
+    
+    uint8 *kbuf = kalloc();
+    if (!kbuf) return -1;
+
     uint64 old_sstatus = r_sstatus();
     w_sstatus(old_sstatus | SSTATUS_SUM);
-    
-    if (handle == STDOUT || handle == STDERR) {
-        extern spinlock_t uart_lock;
-        accquire_lock(&uart_lock);
-        for (uint32 i = 0; i < len; i++) {
-            uart_putc_no_lock(buf[i]);
-        }
-        release_lock(&uart_lock);
-        w_sstatus(old_sstatus);
-        return len;
-    }
+    memcpy(kbuf, buf, len);
     w_sstatus(old_sstatus);
-    // TODO: support file write
+
+    extern int WriteFile(int, uint8*, uint32);
+    uint64 ret = WriteFile(handle, kbuf, len);
+    
+    kfree(kbuf);
+    return ret;
+}
+
+uint64 sys_panic (void) {
+    panic("sys_panic");
     return -1;
+}
+
+uint64 sys_poweroff(void) {
+    printf("Powering off...\n");
+    // RISC-V Virt machine syscon poweroff
+    *(uint32*)SYSCON = 0x5555;
+    return 0;
 }
 
 // System call table
@@ -219,6 +253,8 @@ syscall_t syscall_table[64] = {
     [SYS_CLOSE_HANDLE] = sys_close_handle,
     [SYS_WAIT]         = sys_wait,
     [SYS_LS]           = sys_ls,
+    [SYS_PANIC]        = sys_panic,
+    [SYS_POWEROFF]     = sys_poweroff
 };
 
 void syscall_dispatcher(void) {
@@ -296,6 +332,9 @@ void user_trap_handler() {
         uint64 which_int = scause & 0xfff;
         if (which_int < 16 && interrupt_table[which_int]) {
             interrupt_table[which_int]();
+            if (which_int == 1 && p->state == RUNNING) {
+                yield();
+            }
         }
     } else {
         // Exception

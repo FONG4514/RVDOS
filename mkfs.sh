@@ -35,19 +35,41 @@ CFLAGS="-Wall -O0 -ffreestanding -nostdlib -fno-common -mcmodel=medany -mno-rela
 # 编译所有 c 文件并链接
 ${CC} ${CFLAGS} -c ${USER_DIR}/rvlibc.c -o ${BUILD_DIR}/rvlibc.o
 ${CC} ${CFLAGS} -c ${USER_DIR}/shell.c -o ${BUILD_DIR}/shell.o
+${CC} ${CFLAGS} -c ${USER_DIR}/panic.c -o ${BUILD_DIR}/panic.o
+${CC} ${CFLAGS} -c ${USER_DIR}/ls.c -o ${BUILD_DIR}/ls.o
 
 # 链接：必须包含 rvlibc.o 才能使用 wait_process 等新函数
-${CC} ${CFLAGS} -T ${USER_DIR}/user.ld -nostartfiles ${BUILD_DIR}/rvlibc.o ${BUILD_DIR}/shell.o -o ${BUILD_DIR}/shell.elf
+# 链接 shell 程序
+${CC} ${CFLAGS} -T ${USER_DIR}/user.ld -nostartfiles \
+    ${BUILD_DIR}/rvlibc.o ${BUILD_DIR}/shell.o \
+    -o ${BUILD_DIR}/shell.elf
 
+# 链接 panic 程序
+${CC} ${CFLAGS} -T ${USER_DIR}/user.ld -nostartfiles \
+    ${BUILD_DIR}/rvlibc.o ${BUILD_DIR}/panic.o \
+    -o ${BUILD_DIR}/panic.elf
+
+# 链接 ls 程序
+${CC} ${CFLAGS} -T ${USER_DIR}/user.ld -nostartfiles \
+    ${BUILD_DIR}/rvlibc.o ${BUILD_DIR}/ls.o \
+    -o ${BUILD_DIR}/ls.elf
+    
 # 转换为纯二进制文件，剥离 ELF 头，让内核直接加载代码
 riscv64-linux-gnu-objcopy -S -O binary ${BUILD_DIR}/shell.elf ${BUILD_DIR}/shell
+riscv64-linux-gnu-objcopy -S -O binary ${BUILD_DIR}/panic.elf ${BUILD_DIR}/panic
+riscv64-linux-gnu-objcopy -S -O binary ${BUILD_DIR}/ls.elf ${BUILD_DIR}/ls
 
 # 4. 将文件塞入镜像
 echo "正在将文件存入镜像..."
 # 创建一个测试文件供 Demo 使用
 echo "Hello from RVDOS File System!" > ${BUILD_DIR}/README.TXT
+echo "Persistence Test File - Overwrite me!" > ${BUILD_DIR}/TEST.TXT
 
 mcopy -i ${IMG_NAME} ${BUILD_DIR}/shell ::/shell
+mcopy -i ${IMG_NAME} ${BUILD_DIR}/panic ::/panic
+mcopy -i ${IMG_NAME} ${BUILD_DIR}/ls ::/ls
+mcopy -i ${IMG_NAME} ${BUILD_DIR}/README.TXT ::/README.TXT
+mcopy -i ${IMG_NAME} ${BUILD_DIR}/TEST.TXT ::/TEST.TXT
 
 # 移动 icon (如果是目录则使用 -s 递归)
 if [ -d "icon" ]; then

@@ -95,7 +95,7 @@ extern void sleep(void*, spinlock_t*);
 int console_read(uint8 *buf, int n) {
   int i;
   accquire_lock(&cons.lock);
-  for(i = 0; i < n; i++){
+  for(i = 0; i < n; ){
     while(cons.r == cons.w){
       // Wait for input.
       sleep(&cons.r, &cons.lock);
@@ -113,8 +113,8 @@ int console_read(uint8 *buf, int n) {
     buf[i] = c;
     w_sstatus(old_sstatus);
 
+    i++;
     if(c == '\n') {
-      i++;
       break;
     }
   }

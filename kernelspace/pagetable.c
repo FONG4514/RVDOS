@@ -75,11 +75,12 @@ void kvminit() {
   uint64 ram_sz = PHYSTOP - (uint64)erodata;
   mappages(kernel_pagetable, (uint64)erodata, (uint64)erodata, ram_sz, PTE_R | PTE_W);
 
-  // 5. 映射外设 (UART, VirtIO, CLINT, PLIC)
+  // 5. 映射外设 (UART, VirtIO, CLINT, PLIC, SYSCON)
   mappages(kernel_pagetable, 0x10000000, 0x10000000, PGSIZE, PTE_R | PTE_W);
   mappages(kernel_pagetable, 0x10001000, 0x10001000, PGSIZE, PTE_R | PTE_W);
   mappages(kernel_pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
   mappages(kernel_pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+  mappages(kernel_pagetable, SYSCON, SYSCON, PGSIZE, PTE_R | PTE_W);
 
   // 6. 映射虚拟地址顶端的 TRAMPOLINE
   // 这是一个高地址映射，物理地址指向代码镜像里的位置
@@ -99,6 +100,7 @@ void uvmmap_kernel(pagetable_t upgtbl) {
   mappages(upgtbl, 0x10001000, 0x10001000, PGSIZE, PTE_R | PTE_W); // VirtIO
   mappages(upgtbl, CLINT, CLINT, 0x10000, PTE_R | PTE_W);          // CLINT
   mappages(upgtbl, PLIC, PLIC, 0x400000, PTE_R | PTE_W);          // PLIC
+  mappages(upgtbl, SYSCON, SYSCON, PGSIZE, PTE_R | PTE_W);        // SYSCON
 }
 
 // Function to create a user page table and map trampoline/trapframe

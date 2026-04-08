@@ -28,3 +28,15 @@ int memcmp(const void *v1, const void *v2, uint n) {
 
   return 0;
 }
+
+int strcmp(const char *p, const char *q) {
+  while(*p && *p == *q)
+    p++, q++;
+  return (uchar)*p - (uchar)*q;
+}
+
+uint strlen(const char *s) {
+    uint n = 0;
+    while (s[n]) n++;
+    return n;
+}

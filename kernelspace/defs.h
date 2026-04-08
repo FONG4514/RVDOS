@@ -3,6 +3,7 @@
 #define DEFS_H
 
 #define MAXCPUCORE 8
+#define KERNEL_VERSION 0.3.1_tst1
 
 #ifndef __ASSEMBLER__
 
@@ -115,6 +116,8 @@ typedef struct user_context {
 #define SYS_CLOSE_HANDLE  18
 #define SYS_WAIT          19
 #define SYS_LS            20
+#define SYS_PANIC         21
+#define SYS_POWEROFF      22
 
 #define MAX_HANDLES 16
 #define STDOUT 1
@@ -161,7 +164,7 @@ void            yield(void);
 PCB*            myproc(void);
 void            swtch(struct context*, struct context*);
 void            exit(int status);
-int             spawn(char *path);
+int             spawn(char *path, char *redir_path);
 int             wait(int pid);
 void            forkret(void);
 
@@ -169,6 +172,8 @@ void            forkret(void);
 void*           memcpy(void *dst, const void *src, uint n);
 void*           memset(void *dst, int c, uint n);
 int             memcmp(const void *v1, const void *v2, uint n);
+int             strcmp(const char *p, const char *q);
+uint            strlen(const char *s);
 
 // pagetable.c
 extern pagetable_t kernel_pagetable;
@@ -215,7 +220,7 @@ void fs_init();
 void fs_ls();
 int fs_read_file(char *filename, uint8 *buf, uint32 max_len);
 int fs_read_file_offset(char *filename, uint8 *buf, uint32 offset, uint32 max_len);
-int CreateHandler(char *path);
+int CreateHandler(char *path, int mode);
 int ReadFile(int handle, uint8 *buf, uint32 len);
 void CloseHandle(int handle);
 

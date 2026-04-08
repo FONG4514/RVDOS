@@ -32,6 +32,7 @@
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
 // --- PLIC (Platform Level Interrupt Controller) ---
 #define PLIC 0x0c000000L
+#define SYSCON 0x100000L
 #define PLIC_PRIORITY (PLIC + 0x0)
 #define PLIC_PENDING (PLIC + 0x1000)
 #define PLIC_MENABLE(hart) (PLIC + 0x2000 + (hart)*0x100)

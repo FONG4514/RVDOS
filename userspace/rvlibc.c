@@ -28,8 +28,8 @@ static inline uint64 syscall(uint64 num, uint64 a0, uint64 a1, uint64 a2) {
 
 // --- 系统调用封装实现 ---
 
-handle_t file_open(const char *path) {
-    return (handle_t)syscall(SYS_CREATE_FILE, (uint64)path, 0, 0);
+handle_t file_open(const char *path, int mode) {
+    return (handle_t)syscall(SYS_CREATE_FILE, (uint64)path, (uint64)mode, 0);
 }
 
 int32 file_read(handle_t h, void *buf, uint32 len) {
@@ -56,16 +56,24 @@ pid_t get_pid(void) {
     return (pid_t)syscall(SYS_GETPID, 0, 0, 0);
 }
 
-pid_t spawn_process(const char *path) {
-    return (pid_t)syscall(SYS_SPAWN, (uint64)path, 0, 0);
+pid_t spawn_process(const char *path, const char *redir_path) {
+    return (pid_t)syscall(SYS_SPAWN, (uint64)path, (uint64)redir_path, 0);
 }
 
 int32 wait_process(pid_t pid) {
     return (int32)syscall(SYS_WAIT, (uint64)pid, 0, 0);
 }
 
+void sys_panic() {
+    syscall(SYS_PANIC,0,0,0);
+}
+
 void ls(void) {
     syscall(SYS_LS, 0, 0, 0);
+}
+
+void poweroff(void) {
+    syscall(SYS_POWEROFF, 0, 0, 0);
 }
 
 // --- 基础工具函数 ---
@@ -92,6 +100,15 @@ char* gets(char *buf, int max) {
     cc = file_read(STDIN, &c, 1);
     if(cc < 1)
       break;
+    
+    if (c == '\b' || c == 127) {
+      if (i > 0) {
+        i--;
+        // uart_intr handles echo of backspace, but we might need to send it if kernel didn't
+      }
+      continue;
+    }
+
     buf[i++] = c;
     if(c == '\n' || c == '\r')
       break;

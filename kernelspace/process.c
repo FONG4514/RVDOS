@@ -116,31 +116,37 @@ void scheduler(void) {
     // Avoid deadlock by ensuring interrupts are enabled.
     intr_on();
 
+    PCB *best = 0;
     for(p = procs; p < &procs[64]; p++) {
-      // ONLY acquire lock if process looks runnable.
-      // This prevents CPU A from locking a process currently RUNNING on CPU B.
       if(p->state == RUNNABLE) {
-        accquire_lock(&p->lock);
-        if(p->state == RUNNABLE) {
-          p->state = RUNNING;
-          c->proc = p;
-          
-          // Switch to process's page table
-          uint64 satp = (8L << 60) | ((uint64)p->pagetable >> 12);
-          w_satp(satp);
-          sfence_vma();
-
-          swtch(&c->context, &p->sched_ctx);
-
-          // Process is done running for now.
-          // Switch back to kernel page table
-          w_satp((8L << 60) | ((uint64)kernel_pagetable >> 12));
-          sfence_vma();
-
-          c->proc = 0;
+        if(best == 0 || p->pid < best->pid) {
+          best = p;
         }
-        release_lock(&p->lock);
       }
+    }
+
+    if(best) {
+      p = best;
+      accquire_lock(&p->lock);
+      if(p->state == RUNNABLE) {
+        p->state = RUNNING;
+        c->proc = p;
+        
+        // Switch to process's page table
+        uint64 satp = (8L << 60) | ((uint64)p->pagetable >> 12);
+        w_satp(satp);
+        sfence_vma();
+
+        swtch(&c->context, &p->sched_ctx);
+
+        // Process is done running for now.
+        // Switch back to kernel page table
+        w_satp((8L << 60) | ((uint64)kernel_pagetable >> 12));
+        sfence_vma();
+
+        c->proc = 0;
+      }
+      release_lock(&best->lock);
     }
   }
 }
@@ -224,6 +230,13 @@ void wakeup(void *chan) {
 void exit(int status) {
   PCB *p = myproc();
 
+  // Close all handles
+  for(int h = 0; h < MAX_HANDLES; h++) {
+    if(p->handles[h]) {
+      CloseHandle(h);
+    }
+  }
+
   accquire_lock(&p->lock);
   p->exit_status = status;
   p->state = ZOMBIE;
@@ -272,9 +285,13 @@ int wait(int pid) {
   }
 }
 
+#define O_WRONLY           1
+#define O_CREATE           0x100
+#define O_TRUNC            0x200
+
 // Create a new process, load code from file, and start it.
 // Returns pid of the new process, or -1 on error.
-int spawn(char *path) {
+int spawn(char *path, char *redir_path) {
   PCB *p;
   uint64 pid;
 
@@ -316,6 +333,16 @@ int spawn(char *path) {
       p->context->sp = sz; // Fallback to using last page as stack (dangerous)
   }
 
+  // Handle redirection
+  if (redir_path && redir_path[0] != '\0') {
+      int h = CreateHandler(redir_path, O_WRONLY | O_CREATE | O_TRUNC);
+      if (h >= 0) {
+          // We'll "move" it to the child's STDOUT and remove it from parent's handles.
+          p->handles[STDOUT] = myproc()->handles[h];
+          myproc()->handles[h] = 0;
+      }
+  }
+
   p->state = RUNNABLE;
   pid = p->pid;
 
@@ -325,7 +352,7 @@ int spawn(char *path) {
 
 // Set up first user process.
 void userinit(void) {
-  if (spawn("shell") < 0) {
+  if (spawn("shell", 0) < 0) {
     panic("userinit: failed to spawn shell");
   }
 }
