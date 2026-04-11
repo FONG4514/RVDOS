@@ -8,6 +8,7 @@ void help() {
     print_str("  cat [file]   - Display file contents\n");
     print_str("  clear        - Clear the screen (simulated)\n");
     print_str("  poweroff     - Shut down the system\n");
+    print_str("  reboot       - Reboot the system\n");
     print_str("  exit         - Exit the shell\n");
     print_str("  [prog] > [f] - Redirect output to file\n");
     print_str("  [program]    - Try to execute a program\n");
@@ -44,7 +45,7 @@ void main() {
     print_str("Type 'help' for a list of commands.\n");
 
     while (1) {
-        print_str("$ ");
+        print_str("# ");
         gets(buf, sizeof(buf));
         
         // Remove trailing newline
@@ -85,6 +86,8 @@ void main() {
             for(int i = 0; i < 50; i++) print_str("\n");
         } else if (strcmp(buf, "poweroff") == 0) {
             poweroff();
+        } else if (strcmp(buf, "reboot") == 0) {
+            reboot();
         } else if (strncmp(buf, "echo ", 5) == 0) {
             char *text = buf + 5;
             handle_t out = STDOUT;

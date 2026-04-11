@@ -231,7 +231,6 @@ user_vector:
     sd t2, 88(a0)
     sd s0, 96(a0)
     sd s1, 104(a0)
-    # ... (a1-a7, s2-s11, t3-t6 同理保存)
     sd a1, 120(a0)
     sd a2, 128(a0)
     sd a3, 136(a0)
@@ -265,34 +264,24 @@ user_vector:
     # 5. 载入内核环境 (这些值由内核在进程初始化时填入 Trapframe)
     ld tp, 32(a0)      # hartid / thread pointer
     ld sp, 8(a0)       # 内核栈指针
-    ld t1, 0(a0)       # 内核页表 (satp)
     ld t0, 16(a0)      # usertrap() C 函数地址
 
-    # 6. 切换到内核页表
-    csrw satp, t1
-    sfence.vma
-    
-    # 7. 跳转到内核处理函数
+    # 6. 跳转到内核处理函数 (不再切换 satp)
     jr t0
 
 # --- 从内核返回用户态 ---
 .globl user_ret
 user_ret:
     # a0: Trapframe 指针 (通常在内核态通过参数传入)
-    # a1: 用户页表 satp
     
-    # 1. 切换回用户页表
-    csrw satp, a1
-    sfence.vma
-
     # 此时我们仍在 Trampoline 页面（在两套页表中都映射在同一位置）
     li a0, TRAPFRAME
 
-    # 2. 恢复 EPC
+    # 1. 恢复 EPC
     ld t1, 24(a0)
     csrw sepc, t1
 
-    # 3. 恢复绝大部分寄存器
+    # 2. 恢复绝大部分寄存器
     ld ra, 40(a0)
     ld sp, 48(a0)
     ld gp, 56(a0)
@@ -302,7 +291,6 @@ user_ret:
     ld t2, 88(a0)
     ld s0, 96(a0)
     ld s1, 104(a0)
-    # ... (a1-a7, s2-s11, t3-t6 同理恢复)
     ld a1, 120(a0)
     ld a2, 128(a0)
     ld a3, 136(a0)
@@ -325,8 +313,8 @@ user_ret:
     ld t5, 272(a0)
     ld t6, 280(a0)
 
-    # 4. 最后恢复 a0 (通过 Trapframe 中的记录)
+    # 3. 最后恢复 a0 (通过 Trapframe 中的记录)
     ld a0, 112(a0)
     
-    # 5. 返回用户态
+    # 4. 返回用户态
     sret

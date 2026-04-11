@@ -106,6 +106,7 @@ typedef struct user_context {
 } user_context_t;
 
 // System call numbers
+#define SYS_TRAP          10
 #define SYS_GET_TICKS     11
 #define SYS_SPAWN         12
 #define SYS_EXIT          13
@@ -118,6 +119,7 @@ typedef struct user_context {
 #define SYS_LS            20
 #define SYS_PANIC         21
 #define SYS_POWEROFF      22
+#define SYS_REBOOT        23
 
 #define MAX_HANDLES 16
 #define STDOUT 1

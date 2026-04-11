@@ -294,43 +294,79 @@ int wait(int pid) {
 int spawn(char *path, char *redir_path) {
   PCB *p;
   uint64 pid;
+  struct elfhdr elf;
+  struct proghdr ph;
+  int i, off;
+  pagetable_t pagetable = 0;
 
   if((p = allocproc()) == 0)
     return -1;
 
+  pagetable = p->pagetable;
+
+  // Check ELF header
+  if(fs_read_file_offset(path, (uint8*)&elf, 0, sizeof(elf)) != sizeof(elf))
+    goto bad;
+
+  if(elf.magic != ELF_MAGIC) {
+    // printf("spawn: %s is not a valid ELF\n", path);
+    goto bad;
+  }
+
   uint64 sz = 0;
-  while (1) {
+  // Load program into memory.
+  for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
+    if(fs_read_file_offset(path, (uint8*)&ph, off, sizeof(ph)) != sizeof(ph))
+      goto bad;
+    if(ph.type != ELF_PROG_LOAD)
+      continue;
+    if(ph.memsz < ph.filesz)
+      goto bad;
+    if(ph.vaddr + ph.memsz < ph.vaddr)
+      goto bad;
+    
+    // Allocate and map memory for the segment
+    // We assume segments are page-aligned for now (enforced by linker script usually)
+    for(uint64 j = 0; j < ph.memsz; j += PGSIZE){
       char *mem = kalloc();
-      if (mem == 0) break;
+      if(mem == 0) goto bad;
       memset(mem, 0, PGSIZE);
-      int n = fs_read_file_offset(path, (uint8*)mem, sz, PGSIZE);
-      if (n <= 0) {
+      
+      uint64 count = (ph.filesz > j) ? (ph.filesz - j) : 0;
+      if (count > PGSIZE) count = PGSIZE;
+      
+      if(count > 0){
+        if(fs_read_file_offset(path, (uint8*)mem, ph.off + j, (uint32)count) != (int)count){
           kfree(mem);
-          break;
+          goto bad;
+        }
       }
-      mappages(p->pagetable, sz, (uint64)mem, PGSIZE, PTE_W|PTE_R|PTE_X|PTE_U);
-      sz += PGSIZE;
-      if (n < PGSIZE) break;
+      
+      int perm = PTE_U;
+      if(ph.flags & ELF_PROG_FLAG_READ) perm |= PTE_R;
+      if(ph.flags & ELF_PROG_FLAG_WRITE) perm |= PTE_W;
+      if(ph.flags & ELF_PROG_FLAG_EXEC) perm |= PTE_X;
+
+      if(mappages(pagetable, ph.vaddr + j, (uint64)mem, PGSIZE, perm) < 0){
+        kfree(mem);
+        goto bad;
+      }
+    }
+    if (ph.vaddr + ph.memsz > sz) sz = ph.vaddr + ph.memsz;
   }
 
-  if (sz == 0) {
-      // TODO: cleanup p
-      release_lock(&p->lock);
-      return -1;
-  }
-
-  p->sz = sz;
-  p->context->epc = 0;      // user program counter
+  p->sz = PGROUNDUP(sz);
+  p->context->epc = elf.entry;      // user program counter
   
   // Allocate one more page for stack
   char *stack = kalloc();
   if (stack) {
       memset(stack, 0, PGSIZE);
-      mappages(p->pagetable, sz, (uint64)stack, PGSIZE, PTE_W|PTE_R|PTE_U);
+      mappages(p->pagetable, p->sz, (uint64)stack, PGSIZE, PTE_W|PTE_R|PTE_U);
       p->sz += PGSIZE;
       p->context->sp = p->sz; // user stack pointer at top of new page
   } else {
-      p->context->sp = sz; // Fallback to using last page as stack (dangerous)
+      goto bad;
   }
 
   // Handle redirection
@@ -348,6 +384,13 @@ int spawn(char *path, char *redir_path) {
 
   release_lock(&p->lock);
   return pid;
+
+bad:
+  // In a real OS, we would free the page table and allocated pages here
+  // For now, we just mark the proc as UNUSED to avoid leaks of the PCB itself
+  p->state = UNUSED;
+  release_lock(&p->lock);
+  return -1;
 }
 
 // Set up first user process.

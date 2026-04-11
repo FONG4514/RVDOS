@@ -31,6 +31,7 @@ typedef int32              pid_t;
 #define O_CREATE           0x100
 #define O_TRUNC            0x200
 
+#define SYS_TRAP          10
 #define SYS_GET_TICKS     11
 #define SYS_SPAWN         12
 #define SYS_EXIT          13
@@ -43,8 +44,10 @@ typedef int32              pid_t;
 #define SYS_LS            20
 #define SYS_PANIC         21
 #define SYS_POWEROFF      22
+#define SYS_REBOOT        23
 
 // function
+void     sys_trap(void);
 handle_t file_open(const char *path, int mode);
 int32    file_read(handle_t h, void *buf, uint32 len);
 int32    file_write(handle_t h, const void *buf, uint32 len);
@@ -57,6 +60,7 @@ int32    wait_process(pid_t pid);
 void     sys_panic();
 void     ls(void);
 void     poweroff(void);
+void     reboot(void);
 
 uint32   strlen(const char *s);
 void     print_str(const char *s);

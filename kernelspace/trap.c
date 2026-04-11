@@ -240,9 +240,21 @@ uint64 sys_poweroff(void) {
     return 0;
 }
 
+uint64 sys_reboot(void) {
+    printf("Rebooting...\n");
+    // RISC-V Virt machine syscon reboot
+    *(uint32*)SYSCON = 0x7777;
+    return 0;
+}
+
+uint64 sys_trap(void) {
+    return 0;
+}
+
 // System call table
 // You can expand this by adding entries like [SYS_READ] = sys_read,
 syscall_t syscall_table[64] = {
+    [SYS_TRAP]         = sys_trap,
     [SYS_GET_TICKS]    = sys_get_ticks,
     [SYS_SPAWN]        = sys_spawn,
     [SYS_EXIT]         = sys_exit,
@@ -254,7 +266,8 @@ syscall_t syscall_table[64] = {
     [SYS_WAIT]         = sys_wait,
     [SYS_LS]           = sys_ls,
     [SYS_PANIC]        = sys_panic,
-    [SYS_POWEROFF]     = sys_poweroff
+    [SYS_POWEROFF]     = sys_poweroff,
+    [SYS_REBOOT]       = sys_reboot
 };
 
 void syscall_dispatcher(void) {
@@ -369,9 +382,10 @@ void user_trap_return() {
     w_sepc(p->context->epc);
 
     // Using trampoline user_ret to perform actual return
-    uint64 satp = (8L << 60) | ((uint64)p->pagetable >> 12);
+    // We don't need to switch satp because kernel is mapped in user's page table.
+    // The scheduler switched to p->pagetable.
     uint64 fn = TRAMPOLINE + ((uint64)user_ret - (uint64)user_vector);
-    ((void (*)(uint64, uint64))fn)(TRAPFRAME, satp);
+    ((void (*)(uint64))fn)(TRAPFRAME);
 }
 
 int intr_get() {

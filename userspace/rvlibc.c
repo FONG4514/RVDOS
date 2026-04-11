@@ -28,6 +28,10 @@ static inline uint64 syscall(uint64 num, uint64 a0, uint64 a1, uint64 a2) {
 
 // --- 系统调用封装实现 ---
 
+void sys_trap(void) {
+    syscall(SYS_TRAP, 0, 0, 0);
+}
+
 handle_t file_open(const char *path, int mode) {
     return (handle_t)syscall(SYS_CREATE_FILE, (uint64)path, (uint64)mode, 0);
 }
@@ -74,6 +78,10 @@ void ls(void) {
 
 void poweroff(void) {
     syscall(SYS_POWEROFF, 0, 0, 0);
+}
+
+void reboot(void) {
+    syscall(SYS_REBOOT, 0, 0, 0);
 }
 
 // --- 基础工具函数 ---
