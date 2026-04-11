@@ -24,6 +24,7 @@ void read_icon(uint8* icon_buf) {
 void main() {
   if (r_tp() == 0) {
     printf("\n--- Entering RVDOS ---\n");
+    printf("\n--- Kernel Version: %s ---\n",KERNEL_VERSION);
     printf("Initializing physical memory...\n");
     kinit();
     

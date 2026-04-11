@@ -3,7 +3,7 @@
 #define DEFS_H
 
 #define MAXCPUCORE 8
-#define KERNEL_VERSION sd041i
+#define KERNEL_VERSION "sd_0.4.1_ik"
 
 #ifndef __ASSEMBLER__
 
