@@ -7,8 +7,9 @@ struct trap_info {
 } info;
 
 extern void kernel_vector();
-extern void user_vector();
-extern void user_ret(uint64, uint64);
+// These are in the trampoline section
+extern char trampoline_start[], user_vector[], user_ret[];
+
 extern void fast_user_vector();
 extern int console_read(uint8 *buf, int n);
 extern void uart_putc_no_lock(char c);
@@ -86,43 +87,62 @@ typedef uint64 (*syscall_t)(void);
 // Prototype syscalls
 uint64 sys_create_file(void) {
     PCB *p = myproc();
-    char *path = (char*)p->context->a0;
+    uint64 user_path = p->context->a0;
     int mode = (int)p->context->a1;
-    if (path == 0) return -1;
+    if (user_path == 0) return -1;
 
     char kpath[64];
-    uint64 old_sstatus = r_sstatus();
-    w_sstatus(old_sstatus | SSTATUS_SUM);
-    
-    // Simple copy from user space
-    int i;
-    for(i = 0; i < 63; i++) {
-        kpath[i] = path[i];
+    // Copy string from user space
+    for(int i = 0; i < 63; i++) {
+        uint64 pa = walkaddr(p->pagetable, user_path + i);
+        if(pa == 0) return -1;
+        kpath[i] = *(char*)pa;
         if(kpath[i] == '\0') break;
+        if(i == 62) kpath[63] = '\0';
     }
-    kpath[i] = '\0';
     
-    w_sstatus(old_sstatus);
     return CreateHandler(kpath, mode);
 }
 
 uint64 sys_read_file(void) {
     PCB *p = myproc();
     int handle = (int)p->context->a0;
-    uint8 *buf = (uint8*)p->context->a1;
+    uint64 user_buf = p->context->a1;
     uint32 len = (uint32)p->context->a2;
     
     if (handle < 0 || handle >= MAX_HANDLES || p->handles[handle] == 0) return -1;
 
     uint64 ret;
     if (p->handles[handle] == (file_t *)-1) { // Standard Console
-        w_sstatus(r_sstatus() | SSTATUS_SUM);
-        ret = console_read(buf, len);
-        w_sstatus(r_sstatus() & ~SSTATUS_SUM);
+        // For console read, we'll read into a kernel buffer first
+        uint8 *kbuf = kalloc();
+        if(!kbuf) return -1;
+        int n = (len > PGSIZE) ? PGSIZE : len;
+        ret = console_read(kbuf, n);
+        
+        // Copy back to user
+        for(int i = 0; i < ret; i++) {
+            uint64 pa = walkaddr(p->pagetable, user_buf + i);
+            if(pa == 0) { kfree(kbuf); return -1; }
+            *(uint8*)pa = kbuf[i];
+        }
+        kfree(kbuf);
     } else {
-        w_sstatus(r_sstatus() | SSTATUS_SUM);
-        ret = ReadFile(handle, buf, len);
-        w_sstatus(r_sstatus() & ~SSTATUS_SUM);
+        // For file read, ReadFile takes a kernel buffer.
+        // Similar to console read, we read into kernel memory first.
+        uint8 *kbuf = kalloc();
+        if(!kbuf) return -1;
+        int n = (len > PGSIZE) ? PGSIZE : len;
+        ret = ReadFile(handle, kbuf, n);
+        
+        if(ret > 0) {
+            for(int i = 0; i < ret; i++) {
+                uint64 pa = walkaddr(p->pagetable, user_buf + i);
+                if(pa == 0) { kfree(kbuf); return -1; }
+                *(uint8*)pa = kbuf[i];
+            }
+        }
+        kfree(kbuf);
     }
     
     return ret;
@@ -141,32 +161,34 @@ uint64 sys_get_ticks(void) {
 
 uint64 sys_spawn(void) {
     PCB *p = myproc();
-    char *path = (char*)p->context->a0;
-    char *redir = (char*)p->context->a1;
-    if (path == 0) return -1;
+    uint64 user_path = p->context->a0;
+    uint64 user_redir = p->context->a1;
+    if (user_path == 0) return -1;
 
     char kpath[64];
     char kredir[64];
-    uint64 old_sstatus = r_sstatus();
-    w_sstatus(old_sstatus | SSTATUS_SUM);
     
-    int i;
-    for(i = 0; i < 63; i++) {
-        kpath[i] = path[i];
+    // Copy path from user space
+    for(int i = 0; i < 63; i++) {
+        uint64 pa = walkaddr(p->pagetable, user_path + i);
+        if(pa == 0) return -1;
+        kpath[i] = *(char*)pa;
         if(kpath[i] == '\0') break;
+        if(i == 62) kpath[63] = '\0';
     }
-    kpath[i] = '\0';
 
-    if (redir) {
-        for(i = 0; i < 63; i++) {
-            kredir[i] = redir[i];
+    if (user_redir) {
+        // Copy redir path from user space
+        for(int i = 0; i < 63; i++) {
+            uint64 pa = walkaddr(p->pagetable, user_redir + i);
+            if(pa == 0) return -1;
+            kredir[i] = *(char*)pa;
             if(kredir[i] == '\0') break;
+            if(i == 62) kredir[63] = '\0';
         }
-        kredir[i] = '\0';
     }
     
-    w_sstatus(old_sstatus);
-    return spawn(kpath, redir ? kredir : 0);
+    return spawn(kpath, user_redir ? kredir : 0);
 }
 
 uint64 sys_wait(void) {
@@ -194,32 +216,43 @@ uint64 sys_getpid(void) {
 uint64 sys_write_file(void) {
     PCB *p = myproc();
     int handle = (int)p->context->a0;
-    uint8 *buf = (uint8*)p->context->a1;
+    uint64 user_buf = p->context->a1;
     uint32 len = (uint32)p->context->a2;
     
     if (handle < 0 || handle >= MAX_HANDLES || p->handles[handle] == 0) return -1;
 
     // Standard Output/Error
     if (p->handles[handle] == (file_t *)-1) {
-        uint64 old_sstatus = r_sstatus();
-        w_sstatus(old_sstatus | SSTATUS_SUM);
-        extern int WriteFile(int, uint8*, uint32);
-        uint64 ret = WriteFile(handle, buf, len);
-        w_sstatus(old_sstatus);
-        return ret;
+        // Copy data from user to kernel first
+        uint8 *kbuf = kalloc();
+        if(!kbuf) return -1;
+        uint32 total = 0;
+        while(total < len) {
+            uint32 chunk = (len - total > PGSIZE) ? PGSIZE : (len - total);
+            for(uint32 i = 0; i < chunk; i++) {
+                uint64 pa = walkaddr(p->pagetable, user_buf + total + i);
+                if(pa == 0) { kfree(kbuf); return -1; }
+                kbuf[i] = *(uint8*)pa;
+            }
+            extern int WriteFile(int, uint8*, uint32);
+            WriteFile(handle, kbuf, chunk);
+            total += chunk;
+        }
+        kfree(kbuf);
+        return total;
     }
 
-    // For disk files, we MUST copy data to kernel space because 
-    // VirtIO uses physical addresses (identity mapping) and cannot see user VA.
-    if (len > PGSIZE) len = PGSIZE; // Limit single write to one page for simplicity
+    // For disk files
+    if (len > PGSIZE) len = PGSIZE; 
     
     uint8 *kbuf = kalloc();
     if (!kbuf) return -1;
 
-    uint64 old_sstatus = r_sstatus();
-    w_sstatus(old_sstatus | SSTATUS_SUM);
-    memcpy(kbuf, buf, len);
-    w_sstatus(old_sstatus);
+    for(uint32 i = 0; i < len; i++) {
+        uint64 pa = walkaddr(p->pagetable, user_buf + i);
+        if(pa == 0) { kfree(kbuf); return -1; }
+        kbuf[i] = *(uint8*)pa;
+    }
 
     extern int WriteFile(int, uint8*, uint32);
     uint64 ret = WriteFile(handle, kbuf, len);
@@ -351,9 +384,7 @@ void user_trap_handler() {
         }
     } else {
         // Exception
-        printf("User exception %p, Hart %d, epc %p, tval %p\n", 
-               scause, (int)r_tp(), sepc, r_stval());
-        while(1);
+        exit(-1);
     }
 
     user_trap_return();
@@ -365,8 +396,11 @@ void user_trap_return() {
 
     intr_off();
 
-    // Set stvec to our fast vector (shadow mapped)
-    w_stvec((uint64)fast_user_vector);
+    // Set stvec to user_vector (trampoline page)
+    // We must use the user-space virtual address of user_vector.
+    extern char trampoline_start[], user_vector[];
+    uint64 user_vector_va = TRAMPOLINE + ((uint64)user_vector - (uint64)trampoline_start);
+    w_stvec(user_vector_va);
 
     // Set up context for next trap
     p->context->kernel_satp = r_satp();
@@ -382,10 +416,13 @@ void user_trap_return() {
     w_sepc(p->context->epc);
 
     // Using trampoline user_ret to perform actual return
-    // We don't need to switch satp because kernel is mapped in user's page table.
-    // The scheduler switched to p->pagetable.
-    uint64 fn = TRAMPOLINE + ((uint64)user_ret - (uint64)user_vector);
-    ((void (*)(uint64))fn)(TRAPFRAME);
+    // Now we MUST switch satp back to user's page table.
+    uint64 satp = (8L << 60) | ((uint64)p->pagetable >> 12);
+    uint64 fn = TRAMPOLINE + ((uint64)user_ret - (uint64)trampoline_start);
+    
+    // printf("Returning to user mode: epc=%p, satp=%p\n", p->context->epc, satp);
+    
+    ((void (*)(uint64, uint64))fn)(TRAPFRAME, satp);
 }
 
 int intr_get() {

@@ -3,7 +3,7 @@
 #define DEFS_H
 
 #define MAXCPUCORE 8
-#define KERNEL_VERSION 0.3.1_tst1
+#define KERNEL_VERSION sd041i
 
 #ifndef __ASSEMBLER__
 
@@ -185,6 +185,7 @@ int             mappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     kvmcreate();
 pagetable_t     uvmcreate(user_context_t *context);
 pte_t *         walk(pagetable_t, uint64, int);
+uint64          walkaddr(pagetable_t, uint64);
 void            uvmmap(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm);
 
 

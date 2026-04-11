@@ -47,6 +47,28 @@ int mappages(pagetable_t pagetable, uint64 va, uint64 pa, uint64 size, int perm)
   return 0;
 }
 
+// Look up a virtual address, return the physical address,
+// or 0 if not mapped.
+// Can be used to check if a user address is valid.
+uint64 walkaddr(pagetable_t pagetable, uint64 va) {
+  pte_t *pte;
+  uint64 pa;
+
+  if (va >= MAXVA)
+    return 0;
+
+  pte = walk(pagetable, va, 0);
+  if (pte == 0)
+    return 0;
+  if ((*pte & PTE_V) == 0)
+    return 0;
+  if ((*pte & PTE_U) == 0)
+    return 0;
+  pa = PTE2PA(*pte);
+  // 必须加上虚拟地址在页面内的偏移量
+  return pa | (va & (PGSIZE - 1));
+}
+
 //Initial identity mapping for kernel
 void kvminit() {
   kernel_pagetable = (pagetable_t)kalloc();
@@ -111,15 +133,20 @@ pagetable_t uvmcreate(user_context_t *context) {
 
   extern char trampoline_start[];
   
-  // Map kernel parts for fast system calls (no PTE_U)
-  uvmmap_kernel(pt);
-
-  // Map trampoline (with PTE_R | PTE_X, usually kept for compatibility)
-  mappages(pt, TRAMPOLINE, (uint64)trampoline_start, PGSIZE, PTE_R | PTE_X);
+  // Map trampoline (with PTE_R | PTE_X)
+  // This is required for entering/exiting kernel.
+  if(mappages(pt, TRAMPOLINE, (uint64)trampoline_start, PGSIZE, PTE_R | PTE_X) < 0){
+    // TODO: free pt
+    return 0;
+  }
   
   // Map trapframe (user context) - S-mode uses this to save/restore registers.
-  // We don't give it PTE_U so S-mode can access it without setting sstatus.SUM.
-  mappages(pt, TRAPFRAME, (uint64)context, PGSIZE, PTE_R | PTE_W);
+  // We map it in user page table so user mode code can't see it (no PTE_U),
+  // but it's at a fixed address for user_vector to find.
+  if(mappages(pt, TRAPFRAME, (uint64)context, PGSIZE, PTE_R | PTE_W) < 0){
+    // TODO: free pt
+    return 0;
+  }
 
   return pt;
 }

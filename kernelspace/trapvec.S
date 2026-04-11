@@ -264,16 +264,26 @@ user_vector:
     # 5. 载入内核环境 (这些值由内核在进程初始化时填入 Trapframe)
     ld tp, 32(a0)      # hartid / thread pointer
     ld sp, 8(a0)       # 内核栈指针
+    ld t1, 0(a0)       # 内核页表 (satp)
     ld t0, 16(a0)      # usertrap() C 函数地址
 
-    # 6. 跳转到内核处理函数 (不再切换 satp)
+    # 6. 切换到内核页表
+    csrw satp, t1
+    sfence.vma
+    
+    # 7. 跳转到内核处理函数
     jr t0
 
 # --- 从内核返回用户态 ---
 .globl user_ret
 user_ret:
     # a0: Trapframe 指针 (通常在内核态通过参数传入)
+    # a1: 用户页表 satp
     
+    # 1. 切换回用户页表
+    csrw satp, a1
+    sfence.vma
+
     # 此时我们仍在 Trampoline 页面（在两套页表中都映射在同一位置）
     li a0, TRAPFRAME
 

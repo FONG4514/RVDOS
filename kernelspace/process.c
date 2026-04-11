@@ -132,17 +132,13 @@ void scheduler(void) {
         p->state = RUNNING;
         c->proc = p;
         
-        // Switch to process's page table
-        uint64 satp = (8L << 60) | ((uint64)p->pagetable >> 12);
-        w_satp(satp);
-        sfence_vma();
-
+        // 在隔离模式下，内核始终使用内核页表。
+        // 页表切换由 user_ret (在 trampoline 中) 完成。
+        
         swtch(&c->context, &p->sched_ctx);
 
-        // Process is done running for now.
-        // Switch back to kernel page table
-        w_satp((8L << 60) | ((uint64)kernel_pagetable >> 12));
-        sfence_vma();
+        // 进程暂时运行结束返回调度器。
+        // 同样，我们确信当前处于内核页表环境。
 
         c->proc = 0;
       }
@@ -309,7 +305,6 @@ int spawn(char *path, char *redir_path) {
     goto bad;
 
   if(elf.magic != ELF_MAGIC) {
-    // printf("spawn: %s is not a valid ELF\n", path);
     goto bad;
   }
 
