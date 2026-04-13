@@ -38,6 +38,8 @@ ${CC} ${CFLAGS} -c ${USER_DIR}/shell.c -o ${BUILD_DIR}/shell.o
 ${CC} ${CFLAGS} -c ${USER_DIR}/panic.c -o ${BUILD_DIR}/panic.o
 ${CC} ${CFLAGS} -c ${USER_DIR}/ls.c -o ${BUILD_DIR}/ls.o
 ${CC} ${CFLAGS} -c ${USER_DIR}/bench.c -o ${BUILD_DIR}/bench.o
+${CC} ${CFLAGS} -c ${USER_DIR}/mkdir.c -o ${BUILD_DIR}/mkdir.o
+${CC} ${CFLAGS} -c ${USER_DIR}/rm.c -o ${BUILD_DIR}/rm.o
 
 # 链接：必须包含 rvlibc.o 才能使用 wait_process 等新函数
 # 链接 shell 程序
@@ -59,6 +61,16 @@ ${CC} ${CFLAGS} -T ${USER_DIR}/user.ld -nostartfiles \
 ${CC} ${CFLAGS} -T ${USER_DIR}/user.ld -nostartfiles \
     ${BUILD_DIR}/rvlibc.o ${BUILD_DIR}/bench.o \
     -o ${BUILD_DIR}/bench.elf
+
+# 链接 mkdir 程序
+${CC} ${CFLAGS} -T ${USER_DIR}/user.ld -nostartfiles \
+    ${BUILD_DIR}/rvlibc.o ${BUILD_DIR}/mkdir.o \
+    -o ${BUILD_DIR}/mkdir.elf
+
+# 链接 rm 程序
+${CC} ${CFLAGS} -T ${USER_DIR}/user.ld -nostartfiles \
+    ${BUILD_DIR}/rvlibc.o ${BUILD_DIR}/rm.o \
+    -o ${BUILD_DIR}/rm.elf
     
 # 4. 将文件塞入镜像
 echo "正在将文件存入镜像..."
@@ -70,6 +82,8 @@ mcopy -i ${IMG_NAME} ${BUILD_DIR}/shell.elf ::/shell
 mcopy -i ${IMG_NAME} ${BUILD_DIR}/panic.elf ::/panic
 mcopy -i ${IMG_NAME} ${BUILD_DIR}/ls.elf ::/ls
 mcopy -i ${IMG_NAME} ${BUILD_DIR}/bench.elf ::/bench
+mcopy -i ${IMG_NAME} ${BUILD_DIR}/mkdir.elf ::/mkdir
+mcopy -i ${IMG_NAME} ${BUILD_DIR}/rm.elf ::/rm
 mcopy -i ${IMG_NAME} ${BUILD_DIR}/README.TXT ::/README.TXT
 mcopy -i ${IMG_NAME} ${BUILD_DIR}/TEST.TXT ::/TEST.TXT
 

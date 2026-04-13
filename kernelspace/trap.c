@@ -128,6 +128,26 @@ uint64 sys_read_file(void) {
     return ret;
 }
 
+uint64 sys_getcwd(void) {
+    PCB *p = myproc();
+    char *buf = (char*)p->context->a0;
+    uint32 len = (uint32)p->context->a1;
+    if (buf == 0) return -1;
+
+    uint64 old_sstatus = r_sstatus();
+    w_sstatus(old_sstatus | SSTATUS_SUM);
+    
+    int i;
+    for(i = 0; i < len - 1; i++) {
+        buf[i] = p->cwd_path[i];
+        if(buf[i] == '\0') break;
+    }
+    buf[i] = '\0';
+    
+    w_sstatus(old_sstatus);
+    return 0;
+}
+
 uint64 sys_close_handle(void) {
     PCB *p = myproc();
     int handle = (int)p->context->a0;
@@ -247,6 +267,60 @@ uint64 sys_reboot(void) {
     return 0;
 }
 
+uint64 sys_mkdir(void) {
+    PCB *p = myproc();
+    char *path = (char*)p->context->a0;
+    if (path == 0) return -1;
+
+    char kpath[64];
+    uint64 old_sstatus = r_sstatus();
+    w_sstatus(old_sstatus | SSTATUS_SUM);
+    int i;
+    for(i = 0; i < 63; i++) {
+        kpath[i] = path[i];
+        if(kpath[i] == '\0') break;
+    }
+    kpath[i] = '\0';
+    w_sstatus(old_sstatus);
+    return MakeDir(kpath);
+}
+
+uint64 sys_chdir(void) {
+    PCB *p = myproc();
+    char *path = (char*)p->context->a0;
+    if (path == 0) return -1;
+
+    char kpath[64];
+    uint64 old_sstatus = r_sstatus();
+    w_sstatus(old_sstatus | SSTATUS_SUM);
+    int i;
+    for(i = 0; i < 63; i++) {
+        kpath[i] = path[i];
+        if(kpath[i] == '\0') break;
+    }
+    kpath[i] = '\0';
+    w_sstatus(old_sstatus);
+    return ChangeDir(kpath);
+}
+
+uint64 sys_unlink(void) {
+    PCB *p = myproc();
+    char *path = (char*)p->context->a0;
+    if (path == 0) return -1;
+
+    char kpath[64];
+    uint64 old_sstatus = r_sstatus();
+    w_sstatus(old_sstatus | SSTATUS_SUM);
+    int i;
+    for(i = 0; i < 63; i++) {
+        kpath[i] = path[i];
+        if(kpath[i] == '\0') break;
+    }
+    kpath[i] = '\0';
+    w_sstatus(old_sstatus);
+    return Unlink(kpath);
+}
+
 uint64 sys_trap(void) {
     return 0;
 }
@@ -267,7 +341,11 @@ syscall_t syscall_table[64] = {
     [SYS_LS]           = sys_ls,
     [SYS_PANIC]        = sys_panic,
     [SYS_POWEROFF]     = sys_poweroff,
-    [SYS_REBOOT]       = sys_reboot
+    [SYS_REBOOT]       = sys_reboot,
+    [SYS_MKDIR]        = sys_mkdir,
+    [SYS_CHDIR]        = sys_chdir,
+    [SYS_UNLINK]       = sys_unlink,
+    [SYS_GETCWD]       = sys_getcwd
 };
 
 void syscall_dispatcher(void) {

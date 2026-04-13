@@ -3,7 +3,7 @@
 #define DEFS_H
 
 #define MAXCPUCORE 8
-#define KERNEL_VERSION "sd_0.4.1_std"
+#define KERNEL_VERSION "sd_0.5.0_std"
 
 #ifndef __ASSEMBLER__
 
@@ -120,6 +120,10 @@ typedef struct user_context {
 #define SYS_PANIC         21
 #define SYS_POWEROFF      22
 #define SYS_REBOOT        23
+#define SYS_MKDIR         24
+#define SYS_CHDIR         25
+#define SYS_UNLINK        26
+#define SYS_GETCWD        27
 
 #define MAX_HANDLES 16
 #define STDOUT 1
@@ -147,6 +151,8 @@ typedef struct PCB {
     int pid;
     int exit_status;
     char name[16];
+    uint32 cwd_cluster;
+    char cwd_path[128];
     file_t *handles[MAX_HANDLES];
 } PCB;
 
@@ -225,6 +231,9 @@ int fs_read_file_offset(char *filename, uint8 *buf, uint32 offset, uint32 max_le
 int CreateHandler(char *path, int mode);
 int ReadFile(int handle, uint8 *buf, uint32 len);
 void CloseHandle(int handle);
+int MakeDir(char *path);
+int ChangeDir(char *path);
+int Unlink(char *path);
 
 #endif // __ASSEMBLER__
 

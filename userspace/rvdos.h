@@ -45,6 +45,12 @@ typedef int32              pid_t;
 #define SYS_PANIC         21
 #define SYS_POWEROFF      22
 #define SYS_REBOOT        23
+#define SYS_MKDIR         24
+#define SYS_CHDIR         25
+#define SYS_UNLINK        26
+#define SYS_GETCWD        27
+
+
 
 // function
 void     sys_trap(void);
@@ -61,6 +67,10 @@ void     sys_panic();
 void     ls(void);
 void     poweroff(void);
 void     reboot(void);
+int32    mkdir(const char *path);
+int32    chdir(const char *path);
+int32    unlink(const char *path);
+int32    get_cwd(void *buf,uint32 len);
 
 uint32   strlen(const char *s);
 void     print_str(const char *s);

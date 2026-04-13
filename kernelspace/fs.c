@@ -207,6 +207,13 @@ int FS_CODE disk_read(uint32 sector, uint8 *buf, uint32 count) {
 }
 // --- FAT32 Implementation ---
 #define SECTOR_SIZE 512
+#define ATTR_READ_ONLY 0x01
+#define ATTR_HIDDEN    0x02
+#define ATTR_SYSTEM    0x04
+#define ATTR_VOLUME_ID 0x08
+#define ATTR_DIRECTORY 0x10
+#define ATTR_ARCHIVE   0x20
+#define ATTR_LONG_NAME 0x0F
 
 typedef struct {
     uint8  jmp[3];
@@ -304,6 +311,10 @@ void FS_CODE fs_init() {
     release_lock(&fs_lock);
 }
 
+uint32 FS_CODE fs_get_root_cluster(void) {
+    return fs.root_cluster;
+}
+
 static uint32 FS_CODE cluster_to_sector(uint32 cluster) {
     return fs.first_data_sector + (cluster - 2) * fs.sectors_per_cluster;
 }
@@ -341,6 +352,14 @@ static uint32 FS_CODE alloc_cluster() {
                 if (cluster < 2) continue;
                 *(uint32*)&buf[i] = 0x0FFFFFFF; // Mark as EOC
                 disk_write(fs.fat_sector + s, buf, 1);
+                
+                // Clear the allocated cluster
+                uint32 sector = cluster_to_sector(cluster);
+                memset(buf, 0, SECTOR_SIZE);
+                for (int j = 0; j < fs.sectors_per_cluster; j++) {
+                    disk_write(sector + j, buf, 1);
+                }
+                
                 return cluster;
             }
         }
@@ -373,6 +392,14 @@ void FS_CODE file_free(file_t *f) {
 
 // Convert "filename.ext" to FAT32 8.3 format "FILENAMEEXT"
 static void FS_CODE to_fat_name(char *src, char *dst) {
+    if (strcmp(src, ".") == 0) {
+        memcpy(dst, ".          ", 11);
+        return;
+    }
+    if (strcmp(src, "..") == 0) {
+        memcpy(dst, "..         ", 11);
+        return;
+    }
     memset(dst, ' ', 11);
     int i = 0, j = 0;
     while(src[i] && j < 8 && src[i] != '.') {
@@ -414,104 +441,161 @@ static void FS_CODE clear_cluster_chain(uint32 cluster) {
 #define O_CREATE           0x100
 #define O_TRUNC            0x200
 
+// Helper to find a directory entry
+static int FS_CODE find_dir_entry(uint32 dir_cluster, char *fat_name, FAT32_DirEntry *out_entry, uint32 *out_sector, int *out_idx) {
+    uint32 curr_cluster = dir_cluster;
+    while (curr_cluster >= 2 && curr_cluster < 0x0FFFFFF8) {
+        uint32 sector = cluster_to_sector(curr_cluster);
+        for (int s = 0; s < fs.sectors_per_cluster; s++) {
+            if (disk_read(sector + s, fs.cache_page, 1) < 0) break;
+
+            FAT32_DirEntry *entry = (FAT32_DirEntry*)fs.cache_page;
+            for (int i = 0; i < SECTOR_SIZE / sizeof(FAT32_DirEntry); i++) {
+                if (entry[i].name[0] == 0) return -1; // End of directory
+                if (entry[i].name[0] == 0xE5) continue; // Deleted entry
+                if (entry[i].attr == ATTR_LONG_NAME) continue;
+
+                if (memcmp(entry[i].name, fat_name, 11) == 0) {
+                    if (out_entry) *out_entry = entry[i];
+                    if (out_sector) *out_sector = sector + s;
+                    if (out_idx) *out_idx = i;
+                    return 0;
+                }
+            }
+        }
+        curr_cluster = get_next_cluster(curr_cluster);
+    }
+    return -1;
+}
+
+// Helper to find a free directory entry
+static int FS_CODE find_free_dir_entry(uint32 dir_cluster, uint32 *out_sector, int *out_idx) {
+    uint32 curr_cluster = dir_cluster;
+    uint32 last_cluster = dir_cluster;
+    
+    while (curr_cluster >= 2 && curr_cluster < 0x0FFFFFF8) {
+        uint32 sector = cluster_to_sector(curr_cluster);
+        for (int s = 0; s < fs.sectors_per_cluster; s++) {
+            if (disk_read(sector + s, fs.cache_page, 1) < 0) break;
+
+            FAT32_DirEntry *entry = (FAT32_DirEntry*)fs.cache_page;
+            for (int i = 0; i < SECTOR_SIZE / sizeof(FAT32_DirEntry); i++) {
+                if (entry[i].name[0] == 0 || entry[i].name[0] == 0xE5) {
+                    *out_sector = sector + s;
+                    *out_idx = i;
+                    return 0;
+                }
+            }
+        }
+        last_cluster = curr_cluster;
+        curr_cluster = get_next_cluster(curr_cluster);
+    }
+    
+    // If no free entry found, allocate a new cluster for the directory
+    uint32 next = alloc_cluster();
+    if (next == 0) return -1;
+    set_next_cluster(last_cluster, next);
+    
+    *out_sector = cluster_to_sector(next);
+    *out_idx = 0;
+    return 0;
+}
+
 int FS_CODE CreateHandler(char *path, int mode) {
     char fat_name[11];
     to_fat_name(path, fat_name);
 
     accquire_lock(&fs_lock);
-    uint32 root_sector = cluster_to_sector(fs.root_cluster);
-    if (disk_read(root_sector, fs.cache_page, 1) < 0) {
+    PCB *p = myproc();
+    uint32 cwd = p->cwd_cluster;
+
+    FAT32_DirEntry entry;
+    uint32 sector;
+    int idx;
+
+    if (find_dir_entry(cwd, fat_name, &entry, &sector, &idx) == 0) {
+        // Found existing entry
+        if (entry.attr & ATTR_DIRECTORY) {
+            release_lock(&fs_lock);
+            return -1; // Cannot open directory as file
+        }
+
+        uint32 first_cluster = (entry.first_cluster_hi << 16) | entry.first_cluster_lo;
+        uint32 file_size = entry.file_size;
+
+        if (mode & O_TRUNC) {
+            if (first_cluster >= 2) {
+                uint32 next = get_next_cluster(first_cluster);
+                set_next_cluster(first_cluster, 0x0FFFFFFF); 
+                clear_cluster_chain(next);
+            } else {
+                first_cluster = alloc_cluster();
+                disk_read(sector, fs.cache_page, 1);
+                FAT32_DirEntry *e = (FAT32_DirEntry*)fs.cache_page;
+                e[idx].first_cluster_hi = (first_cluster >> 16) & 0xFFFF;
+                e[idx].first_cluster_lo = first_cluster & 0xFFFF;
+                disk_write(sector, fs.cache_page, 1);
+            }
+            file_size = 0;
+            disk_read(sector, fs.cache_page, 1);
+            FAT32_DirEntry *e = (FAT32_DirEntry*)fs.cache_page;
+            e[idx].file_size = 0;
+            disk_write(sector, fs.cache_page, 1);
+        }
+
+        file_t *f = file_alloc();
+        if(!f) { release_lock(&fs_lock); return -1; }
+        f->first_cluster = first_cluster;
+        f->file_size = file_size;
+        f->readable = 1;
+        f->writable = 1; 
+        f->offset = 0;
+        memcpy(f->name, path, 16);
+        
+        for(int h = 0; h < MAX_HANDLES; h++) {
+            if(p->handles[h] == 0) {
+                p->handles[h] = f;
+                release_lock(&fs_lock);
+                return h; 
+            }
+        }
+        file_free(f);
         release_lock(&fs_lock);
         return -1;
     }
-
-    FAT32_DirEntry *entry = (FAT32_DirEntry*)fs.cache_page;
-    int free_idx = -1;
-    for (int i = 0; i < SECTOR_SIZE / sizeof(FAT32_DirEntry); i++) {
-        if (entry[i].name[0] == 0 || entry[i].name[0] == 0xE5) {
-            if (free_idx == -1) free_idx = i;
-            if (entry[i].name[0] == 0) break;
-            continue;
-        }
-        
-        if (memcmp(entry[i].name, fat_name, 11) == 0) {
-            uint32 first_cluster = (entry[i].first_cluster_hi << 16) | entry[i].first_cluster_lo;
-            uint32 file_size = entry[i].file_size;
-
-            if (mode & O_TRUNC) {
-                // Truncate existing file: clear clusters and reset size
-                if (first_cluster >= 2) {
-                    // Keep the first cluster but clear its link, and free subsequent ones
-                    uint32 next = get_next_cluster(first_cluster);
-                    set_next_cluster(first_cluster, 0x0FFFFFFF); // Mark as EOC
-                    clear_cluster_chain(next);
-                } else {
-                    // No clusters allocated yet, allocate one
-                    first_cluster = alloc_cluster();
-                    entry[i].first_cluster_hi = (first_cluster >> 16) & 0xFFFF;
-                    entry[i].first_cluster_lo = first_cluster & 0xFFFF;
-                }
-                file_size = 0;
-                entry[i].file_size = 0;
-                disk_write(root_sector, fs.cache_page, 1);
-            }
-
-            file_t *f = file_alloc();
-            if(!f) {
-                release_lock(&fs_lock);
-                return -1;
-            }
-            f->first_cluster = first_cluster;
-            f->file_size = file_size;
-            f->readable = 1;
-            f->writable = 1; 
-            f->offset = 0;
-            memcpy(f->name, path, 16);
-            
-            PCB *p = myproc();
-            for(int h = 0; h < MAX_HANDLES; h++) {
-                if(p->handles[h] == 0) {
-                    p->handles[h] = f;
-                    release_lock(&fs_lock);
-                    return h; 
-                }
-            }
-            file_free(f);
-            release_lock(&fs_lock);
-            return -1;
-        }
-    }
     
-    // Create new file on disk
-    if (free_idx != -1 && (mode & O_CREATE)) {
-        uint32 cluster = alloc_cluster();
-        if (cluster != 0) {
-            memset(&entry[free_idx], 0, sizeof(FAT32_DirEntry));
-            memcpy(entry[free_idx].name, fat_name, 11);
-            entry[free_idx].first_cluster_hi = (cluster >> 16) & 0xFFFF;
-            entry[free_idx].first_cluster_lo = cluster & 0xFFFF;
-            entry[free_idx].file_size = 0;
-            entry[free_idx].attr = 0x20;
-            
-            disk_write(root_sector, fs.cache_page, 1);
-            
-            file_t *f = file_alloc();
-            if(f) {
-                f->first_cluster = cluster;
-                f->file_size = 0;
-                f->readable = 1;
-                f->writable = 1;
-                f->offset = 0;
-                memcpy(f->name, path, 16);
-                PCB *p = myproc();
-                for(int h = 0; h < MAX_HANDLES; h++) {
-                    if(p->handles[h] == 0) {
-                        p->handles[h] = f;
-                        release_lock(&fs_lock);
-                        return h;
+    // Create new file
+    if (mode & O_CREATE) {
+        if (find_free_dir_entry(cwd, &sector, &idx) == 0) {
+            uint32 cluster = alloc_cluster();
+            if (cluster != 0) {
+                disk_read(sector, fs.cache_page, 1);
+                FAT32_DirEntry *e = (FAT32_DirEntry*)fs.cache_page;
+                memset(&e[idx], 0, sizeof(FAT32_DirEntry));
+                memcpy(e[idx].name, fat_name, 11);
+                e[idx].first_cluster_hi = (cluster >> 16) & 0xFFFF;
+                e[idx].first_cluster_lo = cluster & 0xFFFF;
+                e[idx].file_size = 0;
+                e[idx].attr = ATTR_ARCHIVE;
+                disk_write(sector, fs.cache_page, 1);
+                
+                file_t *f = file_alloc();
+                if(f) {
+                    f->first_cluster = cluster;
+                    f->file_size = 0;
+                    f->readable = 1;
+                    f->writable = 1;
+                    f->offset = 0;
+                    memcpy(f->name, path, 16);
+                    for(int h = 0; h < MAX_HANDLES; h++) {
+                        if(p->handles[h] == 0) {
+                            p->handles[h] = f;
+                            release_lock(&fs_lock);
+                            return h;
+                        }
                     }
+                    file_free(f);
                 }
-                file_free(f);
             }
         }
     }
@@ -522,61 +606,41 @@ int FS_CODE CreateHandler(char *path, int mode) {
 
 int FS_CODE ReadFile(int handle, uint8 *buf, uint32 len) {
     PCB *p = myproc();
-    // 基础合法性检查
     if(handle < 0 || handle >= MAX_HANDLES || !p->handles[handle]) return -1;
     file_t *f = p->handles[handle];
-
     if(!f->readable) return 0;
 
     accquire_lock(&fs_lock);
-    
-    // 1. 边界检查：已经读到末尾则直接返回
-    if(f->offset >= f->file_size) {
-        release_lock(&fs_lock);
-        return 0;
-    }
+    if(f->offset >= f->file_size) { release_lock(&fs_lock); return 0; }
     if(f->offset + len > f->file_size) len = f->file_size - f->offset;
 
     uint32 bytes_read = 0;
     uint32 cluster = f->first_cluster;
-    
-    // 2. 定位到当前偏移量所在的簇
     uint32 clusters_to_skip = f->offset / (fs.sectors_per_cluster * SECTOR_SIZE);
     for(uint32 i = 0; i < clusters_to_skip; i++) {
         cluster = get_next_cluster(cluster);
-        if(cluster >= 0x0FFFFFF8) {
-            release_lock(&fs_lock);
-            return 0; // 簇链提前中断，可能是 FAT 损坏
-        }
+        if(cluster >= 0x0FFFFFF8) { release_lock(&fs_lock); return 0; }
     }
 
     uint32 offset_in_cluster = f->offset % (fs.sectors_per_cluster * SECTOR_SIZE);
-    
-    // 3. 核心循环：跨簇/跨扇区顺序读取
     while(bytes_read < len && cluster >= 2 && cluster < 0x0FFFFFF8) {
         uint32 sector_base = cluster_to_sector(cluster);
-        
-        // 在当前簇内遍历扇区
         for(int s = offset_in_cluster / SECTOR_SIZE; s < fs.sectors_per_cluster && bytes_read < len; s++) {
             uint32 skip = offset_in_cluster % SECTOR_SIZE;
             uint32 can_read = SECTOR_SIZE - skip;
             if(can_read > (len - bytes_read)) can_read = len - bytes_read;
 
-            // ⚠️ 关键改进：使用全局 cache_page 替代栈上的 uint8 temp[512]
-            // 避免在 RISC-V 这种嵌套调用的环境下触发栈溢出 (Kstack Overflow)
             if(disk_read(sector_base + s, fs.cache_page, 1) < 0) {
                 f->offset += bytes_read;
                 release_lock(&fs_lock);
                 return bytes_read;
             }
-            
             memcpy(buf + bytes_read, fs.cache_page + skip, can_read);
-            
             bytes_read += can_read;
-            offset_in_cluster = 0; // 后续扇区不再有起始偏移
+            offset_in_cluster = 0; 
         }
         cluster = get_next_cluster(cluster);
-        offset_in_cluster = 0; // 后续簇不再有起始偏移
+        offset_in_cluster = 0; 
     }
 
     f->offset += bytes_read;
@@ -584,15 +648,11 @@ int FS_CODE ReadFile(int handle, uint8 *buf, uint32 len) {
     return bytes_read;
 }
 
-static void FS_CODE update_dir_entry_info(char *path, uint32 cluster, uint32 new_size) {
+static void FS_CODE update_dir_entry_info_cwd(uint32 cwd, char *path, uint32 cluster, uint32 new_size) {
     char fat_name[11];
     to_fat_name(path, fat_name);
 
-    // 注意：这里已经在外层 WriteFile 中拿到了 fs_lock，
-    // 如果你在 WriteFile 内部调用此函数，请确保不要在这里重复加锁（会导致死锁）
-    // 或者在这里使用一个不需要锁的内部版本
-    
-    uint32 curr_cluster = fs.root_cluster;
+    uint32 curr_cluster = cwd;
     while (curr_cluster >= 2 && curr_cluster < 0x0FFFFFF8) {
         uint32 sector = cluster_to_sector(curr_cluster);
         for (int s = 0; s < fs.sectors_per_cluster; s++) {
@@ -600,19 +660,14 @@ static void FS_CODE update_dir_entry_info(char *path, uint32 cluster, uint32 new
 
             FAT32_DirEntry *entry = (FAT32_DirEntry*)fs.cache_page;
             for (int i = 0; i < SECTOR_SIZE / sizeof(FAT32_DirEntry); i++) {
-                if (entry[i].name[0] == 0) return; // 目录结束
+                if (entry[i].name[0] == 0) return; 
                 
                 if (memcmp(entry[i].name, fat_name, 11) == 0) {
-                    // 更新起始簇 (只有在第一次分配簇时需要)
                     if (cluster != 0) {
                         entry[i].first_cluster_hi = (cluster >> 16) & 0xFFFF;
                         entry[i].first_cluster_lo = cluster & 0xFFFF;
                     }
-                    // 更新文件大小
-                    if (new_size != 0xFFFFFFFF) {
-                        entry[i].file_size = new_size;
-                    }
-                    
+                    if (new_size != 0xFFFFFFFF) entry[i].file_size = new_size;
                     disk_write(sector + s, fs.cache_page, 1);
                     return;
                 }
@@ -626,7 +681,6 @@ int FS_CODE WriteFile(int handle, uint8 *buf, uint32 len) {
     PCB *p = myproc();
     if(handle < 0 || handle >= MAX_HANDLES || !p->handles[handle]) return -1;
     
-    // 1. 标准输出分支保持不变
     if (p->handles[handle] == (file_t *)-1) {
         extern spinlock_t uart_lock;
         extern void uart_putc_no_lock(char c);
@@ -642,24 +696,19 @@ int FS_CODE WriteFile(int handle, uint8 *buf, uint32 len) {
     accquire_lock(&fs_lock);
     uint32 bytes_written = 0;
 
-    // 2. 首次写入检查：如果文件还没有分配任何簇（新创建的文件）
     if (f->first_cluster == 0) {
         uint32 cluster = alloc_cluster();
         if (cluster == 0) { release_lock(&fs_lock); return -1; }
         f->first_cluster = cluster;
-        // 必须立刻同步起始簇到磁盘目录项，否则文件在磁盘上是“断头”的
-        update_dir_entry_info(f->name, cluster, 0xFFFFFFFF);
+        update_dir_entry_info_cwd(p->cwd_cluster, f->name, cluster, 0xFFFFFFFF);
     }
 
     uint32 cluster = f->first_cluster;
     uint32 prev_cluster = 0;
-    
-    // 3. 定位到当前偏移量 (Offset) 所在的簇
     uint32 clusters_to_skip = f->offset / (fs.sectors_per_cluster * SECTOR_SIZE);
     for(uint32 i = 0; i < clusters_to_skip; i++) {
         prev_cluster = cluster;
         cluster = get_next_cluster(cluster);
-        // 如果 offset 超出了现有长度，则自动扩容分配新簇
         if(cluster >= 0x0FFFFFF8) {
             uint32 next = alloc_cluster();
             if (next == 0) { release_lock(&fs_lock); return bytes_written; }
@@ -669,8 +718,6 @@ int FS_CODE WriteFile(int handle, uint8 *buf, uint32 len) {
     }
 
     uint32 offset_in_cluster = f->offset % (fs.sectors_per_cluster * SECTOR_SIZE);
-    
-    // 4. 磁盘写入核心循环
     while(bytes_written < len && cluster >= 2 && cluster < 0x0FFFFFF8) {
         uint32 sector_start = cluster_to_sector(cluster);
         for(int s = offset_in_cluster / SECTOR_SIZE; s < fs.sectors_per_cluster && bytes_written < len; s++) {
@@ -678,22 +725,17 @@ int FS_CODE WriteFile(int handle, uint8 *buf, uint32 len) {
             uint32 can_write = SECTOR_SIZE - skip;
             if(can_write > (len - bytes_written)) can_write = len - bytes_written;
 
-            // ⚠️ 关键：为了支持 ">" 的追加或随机读写，
-            // 非 512 字节对齐的写入必须“读-改-写”
             if (skip != 0 || can_write < SECTOR_SIZE) {
                 disk_read(sector_start + s, fs.cache_page, 1);
                 memcpy(fs.cache_page + skip, buf + bytes_written, can_write);
                 disk_write(sector_start + s, fs.cache_page, 1);
             } else {
-                // 对齐写入直接推送到磁盘，效率更高
                 disk_write(sector_start + s, buf + bytes_written, 1);
             }
-            
             bytes_written += can_write;
             offset_in_cluster = 0; 
         }
 
-        // 5. 跨簇逻辑：如果数据没写完，寻找或分配下一个簇
         if (bytes_written < len) {
             prev_cluster = cluster;
             cluster = get_next_cluster(cluster);
@@ -707,11 +749,10 @@ int FS_CODE WriteFile(int handle, uint8 *buf, uint32 len) {
         }
     }
 
-    // 6. 更新偏移量和文件大小
     f->offset += bytes_written;
     if (f->offset > f->file_size) {
         f->file_size = f->offset;
-        update_dir_entry_info(f->name, 0, f->file_size);
+        update_dir_entry_info_cwd(p->cwd_cluster, f->name, 0, f->file_size);
     }
 
     release_lock(&fs_lock);
@@ -720,94 +761,60 @@ int FS_CODE WriteFile(int handle, uint8 *buf, uint32 len) {
 
 void FS_CODE CloseHandle(int handle) {
     PCB *p = myproc();
-    
-    // 1. 基础合法性检查
-    if(handle < 0 || handle >= MAX_HANDLES || p->handles[handle] == 0) {
-        return;
-    }
-
-    // 2. 处理标准输出/错误 (Handle = -1)
-    // 这种特殊句柄不需要释放内存，直接清空进程表即可
-    if (p->handles[handle] == (file_t *)-1) {
-        p->handles[handle] = 0;
-        return;
-    }
-
-    // 3. 处理普通磁盘文件
+    if(handle < 0 || handle >= MAX_HANDLES || p->handles[handle] == 0) return;
+    if (p->handles[handle] == (file_t *)-1) { p->handles[handle] = 0; return; }
     file_t *f = p->handles[handle];
-    
-    // 释放 file_pool 中的条目 (内部会处理 used 标志和锁)
     file_free(f);
-
-    // 4. 清空当前进程的句柄槽位
     p->handles[handle] = 0;
-    
-    // 调试信息：确认文件已正常关闭
-    // printf("RVDOS: Handle %d closed.\n", handle);
-}
-// --- Compatibility Wrappers for Kernel Internal Use ---
-
-static void FS_CODE ls_write(char *s) {
-    WriteFile(STDOUT, (uint8*)s, strlen(s));
 }
 
 void FS_CODE fs_ls() {
     uint8 sector_buf[SECTOR_SIZE];
-    uint32 root_sector;
+    PCB *p = myproc();
+    uint32 curr_cluster = p->cwd_cluster;
 
     accquire_lock(&fs_lock);
-    root_sector = cluster_to_sector(fs.root_cluster);
-    if (disk_read(root_sector, sector_buf, 1) < 0) {
-        release_lock(&fs_lock);
-        return;
+    while (curr_cluster >= 2 && curr_cluster < 0x0FFFFFF8) {
+        uint32 sector_base = cluster_to_sector(curr_cluster);
+        for (int s = 0; s < fs.sectors_per_cluster; s++) {
+            if (disk_read(sector_base + s, sector_buf, 1) < 0) break;
+
+            FAT32_DirEntry *entry = (FAT32_DirEntry*)sector_buf;
+            for (int i = 0; i < SECTOR_SIZE / sizeof(FAT32_DirEntry); i++) {
+                if (entry[i].name[0] == 0) goto done;
+                if (entry[i].name[0] == 0xE5) continue;
+                if (entry[i].attr == ATTR_LONG_NAME) continue;
+
+                char buf[32];
+                int p_idx = 0;
+                if (entry[i].attr & ATTR_DIRECTORY) buf[p_idx++] = '[';
+                for (int j = 0; j < 8; j++) if (entry[i].name[j] != ' ') buf[p_idx++] = entry[i].name[j];
+                if (entry[i].ext[0] != ' ') {
+                    buf[p_idx++] = '.';
+                    for (int j = 0; j < 3; j++) if (entry[i].ext[j] != ' ') buf[p_idx++] = entry[i].ext[j];
+                }
+                if (entry[i].attr & ATTR_DIRECTORY) buf[p_idx++] = ']';
+                buf[p_idx++] = ' '; buf[p_idx++] = ' '; buf[p_idx] = '\0';
+                WriteFile(STDOUT, (uint8*)buf, strlen(buf));
+
+                char sz_buf[16];
+                uint32 sz = entry[i].file_size;
+                int k = 0;
+                if (sz == 0) sz_buf[k++] = '0';
+                else {
+                    char temp[16];
+                    int l = 0;
+                    while (sz > 0) { temp[l++] = (sz % 10) + '0'; sz /= 10; }
+                    while (l > 0) sz_buf[k++] = temp[--l];
+                }
+                sz_buf[k++] = ' '; sz_buf[k++] = 'b'; sz_buf[k++] = 'y'; sz_buf[k++] = 't'; sz_buf[k++] = 'e'; sz_buf[k++] = 's'; sz_buf[k++] = '\n'; sz_buf[k] = '\0';
+                WriteFile(STDOUT, (uint8*)sz_buf, strlen(sz_buf));
+            }
+        }
+        curr_cluster = get_next_cluster(curr_cluster);
     }
+done:
     release_lock(&fs_lock);
-
-    FAT32_DirEntry *entry = (FAT32_DirEntry*)sector_buf;
-    for (int i = 0; i < SECTOR_SIZE / sizeof(FAT32_DirEntry); i++) {
-        if (entry[i].name[0] == 0) break;
-        if (entry[i].name[0] == 0xE5) continue;
-        if (entry[i].attr == 0x0F) continue;
-
-        char buf[32];
-        int p = 0;
-        for (int j = 0; j < 8; j++) if (entry[i].name[j] != ' ') buf[p++] = entry[i].name[j];
-        if (entry[i].ext[0] != ' ') {
-            buf[p++] = '.';
-            for (int j = 0; j < 3; j++) if (entry[i].ext[j] != ' ') buf[p++] = entry[i].ext[j];
-        }
-        buf[p++] = ' '; buf[p++] = ' '; buf[p] = '\0';
-        ls_write(buf);
-
-        // Simple int to string for size
-        char sz_buf[16];
-        uint32 sz = entry[i].file_size;
-        int k = 0;
-        if (sz == 0) sz_buf[k++] = '0';
-        else {
-            char temp[16];
-            int l = 0;
-            while (sz > 0) { temp[l++] = (sz % 10) + '0'; sz /= 10; }
-            while (l > 0) sz_buf[k++] = temp[--l];
-        }
-        sz_buf[k++] = ' '; sz_buf[k++] = 'b'; sz_buf[k++] = 'y'; sz_buf[k++] = 't'; sz_buf[k++] = 'e'; sz_buf[k++] = 's'; sz_buf[k++] = '\n'; sz_buf[k] = '\0';
-        ls_write(sz_buf);
-    }
-
-    // Show mock files
-    accquire_lock(&file_pool_lock);
-    for(int i = 0; i < 64; i++) {
-        if(file_pool[i].used && file_pool[i].first_cluster == 0) {
-            ls_write(file_pool[i].name);
-            ls_write(" (in-memory)\n");
-        }
-    }
-    release_lock(&file_pool_lock);
-}
-
-// Internal version of read_file that doesn't use handles
-int FS_CODE fs_read_file(char *filename, uint8 *out_buf, uint32 max_len) {
-    return fs_read_file_offset(filename, out_buf, 0, max_len);
 }
 
 int FS_CODE fs_read_file_offset(char *filename, uint8 *out_buf, uint32 offset, uint32 max_len) {
@@ -815,56 +822,29 @@ int FS_CODE fs_read_file_offset(char *filename, uint8 *out_buf, uint32 offset, u
     to_fat_name(filename, fat_name);
 
     accquire_lock(&fs_lock);
-    uint32 root_sector = cluster_to_sector(fs.root_cluster);
-    if (disk_read(root_sector, fs.cache_page, 1) < 0) {
-        release_lock(&fs_lock);
-        return -1;
-    }
+    PCB *p = myproc();
+    uint32 cwd = p ? p->cwd_cluster : fs.root_cluster;
 
-    FAT32_DirEntry *entry = (FAT32_DirEntry*)fs.cache_page;
     FAT32_DirEntry target;
-    int found = 0;
-
-    for (int i = 0; i < SECTOR_SIZE / sizeof(FAT32_DirEntry); i++) {
-        if (entry[i].name[0] == 0) break;
-        if (entry[i].name[0] == 0xE5) continue;
-        
-        if (memcmp(entry[i].name, fat_name, 11) == 0) {
-            target = entry[i];
-            found = 1;
-            break;
-        }
-    }
-
-    if (!found) {
+    if (find_dir_entry(cwd, fat_name, &target, 0, 0) < 0) {
         release_lock(&fs_lock);
         return -1;
     }
 
-    if (offset >= target.file_size) {
-        release_lock(&fs_lock);
-        return 0;
-    }
-
+    if (offset >= target.file_size) { release_lock(&fs_lock); return 0; }
     uint32 size = target.file_size - offset;
     if (size > max_len) size = max_len;
 
     uint32 cluster = (target.first_cluster_hi << 16) | target.first_cluster_lo;
-    
-    // Skip to offset
     uint32 bytes_to_skip = offset;
     while (bytes_to_skip >= fs.sectors_per_cluster * SECTOR_SIZE) {
         cluster = get_next_cluster(cluster);
-        if (cluster >= 0x0FFFFFF8) {
-            release_lock(&fs_lock);
-            return 0;
-        }
+        if (cluster >= 0x0FFFFFF8) { release_lock(&fs_lock); return 0; }
         bytes_to_skip -= fs.sectors_per_cluster * SECTOR_SIZE;
     }
 
     uint32 bytes_read = 0;
     uint32 offset_in_cluster = bytes_to_skip;
-
     while (cluster >= 2 && cluster < 0x0FFFFFF8 && bytes_read < size) {
         uint32 sector = cluster_to_sector(cluster);
         for (int s = offset_in_cluster / SECTOR_SIZE; s < fs.sectors_per_cluster && bytes_read < size; s++) {
@@ -872,13 +852,11 @@ int FS_CODE fs_read_file_offset(char *filename, uint8 *out_buf, uint32 offset, u
             uint32 can_read = SECTOR_SIZE - skip_in_sector;
             if (can_read > (size - bytes_read)) can_read = size - bytes_read;
 
-            uint8 temp[SECTOR_SIZE];
-            if (disk_read(sector + s, temp, 1) < 0) {
+            if (disk_read(sector + s, fs.cache_page, 1) < 0) {
                 release_lock(&fs_lock);
                 return bytes_read;
             }
-            memcpy(out_buf + bytes_read, temp + skip_in_sector, can_read);
-            
+            memcpy(out_buf + bytes_read, fs.cache_page + skip_in_sector, can_read);
             bytes_read += can_read;
             offset_in_cluster = 0;
         }
@@ -888,6 +866,173 @@ int FS_CODE fs_read_file_offset(char *filename, uint8 *out_buf, uint32 offset, u
 
     release_lock(&fs_lock);
     return bytes_read;
+}
+
+// Internal version of read_file that doesn't use handles
+int FS_CODE fs_read_file(char *filename, uint8 *out_buf, uint32 max_len) {
+    return fs_read_file_offset(filename, out_buf, 0, max_len);
+}
+
+int FS_CODE MakeDir(char *path) {
+    char fat_name[11];
+    to_fat_name(path, fat_name);
+
+    accquire_lock(&fs_lock);
+    PCB *p = myproc();
+    uint32 cwd = p->cwd_cluster;
+
+    if (find_dir_entry(cwd, fat_name, 0, 0, 0) == 0) {
+        release_lock(&fs_lock);
+        return -1; // Already exists
+    }
+
+    uint32 sector;
+    int idx;
+    if (find_free_dir_entry(cwd, &sector, &idx) < 0) {
+        release_lock(&fs_lock);
+        return -1;
+    }
+
+    uint32 cluster = alloc_cluster();
+    if (cluster == 0) { release_lock(&fs_lock); return -1; }
+
+    // Write directory entry in parent
+    disk_read(sector, fs.cache_page, 1);
+    FAT32_DirEntry *e = (FAT32_DirEntry*)fs.cache_page;
+    memset(&e[idx], 0, sizeof(FAT32_DirEntry));
+    memcpy(e[idx].name, fat_name, 11);
+    e[idx].first_cluster_hi = (cluster >> 16) & 0xFFFF;
+    e[idx].first_cluster_lo = cluster & 0xFFFF;
+    e[idx].attr = ATTR_DIRECTORY;
+    disk_write(sector, fs.cache_page, 1);
+
+    // Initialize new directory with . and ..
+    uint32 new_sector = cluster_to_sector(cluster);
+    memset(fs.cache_page, 0, SECTOR_SIZE);
+    FAT32_DirEntry *dot = (FAT32_DirEntry*)fs.cache_page;
+    
+    memcpy(dot[0].name, ".          ", 11);
+    dot[0].attr = ATTR_DIRECTORY;
+    dot[0].first_cluster_hi = (cluster >> 16) & 0xFFFF;
+    dot[0].first_cluster_lo = cluster & 0xFFFF;
+
+    memcpy(dot[1].name, "..         ", 11);
+    dot[1].attr = ATTR_DIRECTORY;
+    uint32 parent = (cwd == fs.root_cluster) ? 0 : cwd; // FAT32: .. of root or subdir to root is 0
+    dot[1].first_cluster_hi = (parent >> 16) & 0xFFFF;
+    dot[1].first_cluster_lo = parent & 0xFFFF;
+
+    disk_write(new_sector, fs.cache_page, 1);
+
+    release_lock(&fs_lock);
+    return 0;
+}
+
+int FS_CODE ChangeDir(char *path) {
+    PCB *p = myproc();
+    if (strcmp(path, "/") == 0) {
+        p->cwd_cluster = fs.root_cluster;
+        p->cwd_path[0] = '/';
+        p->cwd_path[1] = '\0';
+        return 0;
+    }
+
+    char fat_name[11];
+    to_fat_name(path, fat_name);
+
+    accquire_lock(&fs_lock);
+    FAT32_DirEntry entry;
+    if (find_dir_entry(p->cwd_cluster, fat_name, &entry, 0, 0) < 0) {
+        release_lock(&fs_lock);
+        return -1;
+    }
+
+    if (!(entry.attr & ATTR_DIRECTORY)) {
+        release_lock(&fs_lock);
+        return -1;
+    }
+
+    uint32 cluster = (entry.first_cluster_hi << 16) | entry.first_cluster_lo;
+    if (cluster == 0) cluster = fs.root_cluster;
+    p->cwd_cluster = cluster;
+
+    // Update cwd_path
+    if (strcmp(path, ".") == 0) {
+        // No change
+    } else if (strcmp(path, "..") == 0) {
+        if (strcmp(p->cwd_path, "/") != 0) {
+            int len = strlen(p->cwd_path);
+            int i = len - 1;
+            while (i > 0 && p->cwd_path[i] != '/') i--;
+            if (i == 0) p->cwd_path[1] = '\0';
+            else p->cwd_path[i] = '\0';
+        }
+    } else {
+        int len = strlen(p->cwd_path);
+        if (len > 1) {
+            p->cwd_path[len++] = '/';
+        }
+        int i = 0;
+        while (path[i] && len < 127) {
+            p->cwd_path[len++] = path[i++];
+        }
+        p->cwd_path[len] = '\0';
+    }
+
+    release_lock(&fs_lock);
+    return 0;
+}
+
+int FS_CODE Unlink(char *path) {
+    char fat_name[11];
+    to_fat_name(path, fat_name);
+
+    accquire_lock(&fs_lock);
+    FAT32_DirEntry entry;
+    uint32 sector;
+    int idx;
+    if (find_dir_entry(myproc()->cwd_cluster, fat_name, &entry, &sector, &idx) < 0) {
+        release_lock(&fs_lock);
+        return -1;
+    }
+
+    if (entry.attr & ATTR_DIRECTORY) {
+        // Check if directory is empty (only . and ..)
+        uint32 cluster = (entry.first_cluster_hi << 16) | entry.first_cluster_lo;
+        uint32 curr_cluster = cluster;
+        while (curr_cluster >= 2 && curr_cluster < 0x0FFFFFF8) {
+            uint32 s_base = cluster_to_sector(curr_cluster);
+            for (int s = 0; s < fs.sectors_per_cluster; s++) {
+                uint8 buf[SECTOR_SIZE];
+                disk_read(s_base + s, buf, 1);
+                FAT32_DirEntry *e = (FAT32_DirEntry*)buf;
+                for (int i = 0; i < SECTOR_SIZE / sizeof(FAT32_DirEntry); i++) {
+                    if (e[i].name[0] == 0) goto empty_check_done;
+                    if (e[i].name[0] == 0xE5) continue;
+                    if (memcmp(e[i].name, ".          ", 11) == 0) continue;
+                    if (memcmp(e[i].name, "..         ", 11) == 0) continue;
+                    // Found something else
+                    release_lock(&fs_lock);
+                    return -1; 
+                }
+            }
+            curr_cluster = get_next_cluster(curr_cluster);
+        }
+    }
+empty_check_done:
+
+    // Free clusters
+    uint32 first_cluster = (entry.first_cluster_hi << 16) | entry.first_cluster_lo;
+    clear_cluster_chain(first_cluster);
+
+    // Remove directory entry
+    disk_read(sector, fs.cache_page, 1);
+    FAT32_DirEntry *e = (FAT32_DirEntry*)fs.cache_page;
+    e[idx].name[0] = 0xE5;
+    disk_write(sector, fs.cache_page, 1);
+
+    release_lock(&fs_lock);
+    return 0;
 }
 
 int FS_CODE disk_write(uint32 sector, uint8 *buf, uint32 count) {

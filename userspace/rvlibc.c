@@ -40,6 +40,10 @@ int32 file_read(handle_t h, void *buf, uint32 len) {
     return (int32)syscall(SYS_READ_FILE, (uint64)h, (uint64)buf, (uint64)len);
 }
 
+int32 get_cwd(void *buf,uint32 len) {
+    return (int32)syscall(SYS_GETCWD, (uint64)buf, (uint64)len,0);
+}
+
 int32 file_write(handle_t h, const void *buf, uint32 len) {
     return (int32)syscall(SYS_WRITE_FILE, (uint64)h, (uint64)buf, (uint64)len);
 }
@@ -82,6 +86,18 @@ void poweroff(void) {
 
 void reboot(void) {
     syscall(SYS_REBOOT, 0, 0, 0);
+}
+
+int32 mkdir(const char *path) {
+    return (int32)syscall(SYS_MKDIR, (uint64)path, 0, 0);
+}
+
+int32 chdir(const char *path) {
+    return (int32)syscall(SYS_CHDIR, (uint64)path, 0, 0);
+}
+
+int32 unlink(const char *path) {
+    return (int32)syscall(SYS_UNLINK, (uint64)path, 0, 0);
 }
 
 // --- 基础工具函数 ---

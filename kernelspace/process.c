@@ -99,6 +99,12 @@ found:
   p->sched_ctx.ra = (uint64)forkret;
   p->sched_ctx.sp = p->kstack + PGSIZE;
 
+  // Initialize current working directory to root
+  extern uint32 fs_get_root_cluster(void);
+  p->cwd_cluster = fs_get_root_cluster();
+  p->cwd_path[0] = '/';
+  p->cwd_path[1] = '\0';
+
   return p;
 }
 
@@ -301,6 +307,12 @@ int spawn(char *path, char *redir_path) {
 
   if((p = allocproc()) == 0)
     return -1;
+
+  PCB *parent = myproc();
+  if (parent) {
+      p->cwd_cluster = parent->cwd_cluster;
+      memcpy(p->cwd_path, parent->cwd_path, 128);
+  }
 
   pagetable = p->pagetable;
 
