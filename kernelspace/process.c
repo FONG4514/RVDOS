@@ -297,7 +297,7 @@ int wait(int pid) {
 
 // Create a new process, load code from file, and start it.
 // Returns pid of the new process, or -1 on error.
-int spawn(char *path, char *redir_path) {
+int spawn(char *path, char *args) {
   PCB *p;
   uint64 pid;
   struct elfhdr elf;
@@ -338,7 +338,6 @@ int spawn(char *path, char *redir_path) {
       goto bad;
     
     // Allocate and map memory for the segment
-    // We assume segments are page-aligned for now (enforced by linker script usually)
     for(uint64 j = 0; j < ph.memsz; j += PGSIZE){
       char *mem = kalloc();
       if(mem == 0) goto bad;
@@ -376,19 +375,75 @@ int spawn(char *path, char *redir_path) {
       memset(stack, 0, PGSIZE);
       mappages(p->pagetable, p->sz, (uint64)stack, PGSIZE, PTE_W|PTE_R|PTE_U);
       p->sz += PGSIZE;
-      p->context->sp = p->sz; // user stack pointer at top of new page
+      
+      // Since kernel is mapped into user space and we use identity mapping for physical memory,
+      // we can write to the 'stack' pointer (physical address) directly to set up user stack.
+      uint64 sp_offset = PGSIZE; // Start from top of the page
+      uint64 argc = 0;
+      uint64 *uargv;
+      char *uargs[16]; // Max 16 args
+
+      // 1. Copy program name (argv[0])
+      int path_len = strlen(path);
+      sp_offset -= (path_len + 1);
+      memcpy(stack + sp_offset, path, path_len + 1);
+      uargs[argc++] = (char*)(p->sz - PGSIZE + sp_offset); // Virtual address
+
+      // 2. Parse and copy arguments, and handle redirection
+      char *redir_file = 0;
+      if (args && args[0] != '\0') {
+          char *s = args;
+          while (*s && argc < 15) {
+              while (*s == ' ') s++;
+              if (*s == '\0') break;
+              
+              // Check for redirection
+              if (*s == '>') {
+                  *s = '\0'; // End arguments here for the process
+                  s++;
+                  while (*s == ' ') s++;
+                  if (*s != '\0') redir_file = s;
+                  break; 
+              }
+
+              char *start = s;
+              while (*s && *s != ' ' && *s != '>') s++;
+              int len = s - start;
+              
+              sp_offset -= (len + 1);
+              memcpy(stack + sp_offset, start, len);
+              stack[sp_offset + len] = '\0';
+              uargs[argc++] = (char*)(p->sz - PGSIZE + sp_offset);
+              if (*s == '>') continue; // Will be handled in next iteration or break
+          }
+      }
+
+      // Handle output redirection if found
+      if (redir_file) {
+          // Trim trailing spaces from redir_file
+          char *end = redir_file;
+          while (*end && *end != ' ') end++;
+          if (*end == ' ') *end = '\0';
+
+          int h = CreateHandler(redir_file, O_WRONLY | O_CREATE | O_TRUNC);
+          if (h >= 0) {
+              p->handles[STDOUT] = myproc()->handles[h];
+              myproc()->handles[h] = 0;
+          }
+      }
+
+      // 3. Set up argv array (pointers)
+      sp_offset -= (argc + 1) * sizeof(uint64);
+      sp_offset &= ~0xF; // 16-byte align stack
+      uargv = (uint64*)(stack + sp_offset);
+      for(int i = 0; i < argc; i++) uargv[i] = (uint64)uargs[i];
+      uargv[argc] = 0;
+
+      p->context->sp = p->sz - PGSIZE + sp_offset; // Virtual SP
+      p->context->a0 = argc;
+      p->context->a1 = p->context->sp;
   } else {
       goto bad;
-  }
-
-  // Handle redirection
-  if (redir_path && redir_path[0] != '\0') {
-      int h = CreateHandler(redir_path, O_WRONLY | O_CREATE | O_TRUNC);
-      if (h >= 0) {
-          // We'll "move" it to the child's STDOUT and remove it from parent's handles.
-          p->handles[STDOUT] = myproc()->handles[h];
-          myproc()->handles[h] = 0;
-      }
   }
 
   p->state = RUNNABLE;
@@ -398,8 +453,6 @@ int spawn(char *path, char *redir_path) {
   return pid;
 
 bad:
-  // In a real OS, we would free the page table and allocated pages here
-  // For now, we just mark the proc as UNUSED to avoid leaks of the PCB itself
   p->state = UNUSED;
   release_lock(&p->lock);
   return -1;

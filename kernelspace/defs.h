@@ -3,7 +3,7 @@
 #define DEFS_H
 
 #define MAXCPUCORE 8
-#define KERNEL_VERSION "sd_0.5.0_std"
+#define KERNEL_VERSION "sd_0.5.3_std"
 
 #ifndef __ASSEMBLER__
 
@@ -124,6 +124,7 @@ typedef struct user_context {
 #define SYS_CHDIR         25
 #define SYS_UNLINK        26
 #define SYS_GETCWD        27
+#define SYS_RENAME        28
 
 #define MAX_HANDLES 16
 #define STDOUT 1
@@ -182,6 +183,7 @@ void*           memset(void *dst, int c, uint n);
 int             memcmp(const void *v1, const void *v2, uint n);
 int             strcmp(const char *p, const char *q);
 uint            strlen(const char *s);
+int             copyout(pagetable_t pagetable, uint64 dstva, uint8 *src, uint64 len);
 
 // pagetable.c
 extern pagetable_t kernel_pagetable;
@@ -234,6 +236,7 @@ void CloseHandle(int handle);
 int MakeDir(char *path);
 int ChangeDir(char *path);
 int Unlink(char *path);
+int mv(char *oldpath, char *newpath);
 
 #endif // __ASSEMBLER__
 

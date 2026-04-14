@@ -321,6 +321,30 @@ uint64 sys_unlink(void) {
     return Unlink(kpath);
 }
 
+uint64 sys_rename(void) {
+    PCB *p = myproc();
+    char *oldpath = (char*)p->context->a0;
+    char *newpath = (char*)p->context->a1;
+    if (oldpath == 0 || newpath == 0) return -1;
+
+    char kold[64], knew[64];
+    uint64 old_sstatus = r_sstatus();
+    w_sstatus(old_sstatus | SSTATUS_SUM);
+    int i;
+    for(i = 0; i < 63; i++) {
+        kold[i] = oldpath[i];
+        if(kold[i] == '\0') break;
+    }
+    kold[i] = '\0';
+    for(i = 0; i < 63; i++) {
+        knew[i] = newpath[i];
+        if(knew[i] == '\0') break;
+    }
+    knew[i] = '\0';
+    w_sstatus(old_sstatus);
+    return mv(kold, knew);
+}
+
 uint64 sys_trap(void) {
     return 0;
 }
@@ -345,7 +369,8 @@ syscall_t syscall_table[64] = {
     [SYS_MKDIR]        = sys_mkdir,
     [SYS_CHDIR]        = sys_chdir,
     [SYS_UNLINK]       = sys_unlink,
-    [SYS_GETCWD]       = sys_getcwd
+    [SYS_GETCWD]       = sys_getcwd,
+    [SYS_RENAME]       = sys_rename
 };
 
 void syscall_dispatcher(void) {

@@ -281,6 +281,7 @@ static int set_next_cluster(uint32 cluster, uint32 next);
 static uint32 get_next_cluster(uint32 cluster);
 static uint32 cluster_to_sector(uint32 cluster);
 static void to_fat_name(char *src, char *dst);
+static uint32 get_path_cluster(char *path);
 
 void FS_CODE fs_init() {
     init_lock(&file_pool_lock, "file_pool_lock");
@@ -503,17 +504,29 @@ static int FS_CODE find_free_dir_entry(uint32 dir_cluster, uint32 *out_sector, i
 
 int FS_CODE CreateHandler(char *path, int mode) {
     char fat_name[11];
-    to_fat_name(path, fat_name);
+    char name_raw[16];
+    
+    // Extract filename and directory cluster
+    int last_slash = -1;
+    for(int i=0; path[i]; i++) if(path[i] == '/') last_slash = i;
+    memcpy(name_raw, path + last_slash + 1, strlen(path + last_slash + 1) + 1);
+    to_fat_name(name_raw, fat_name);
 
     accquire_lock(&fs_lock);
-    PCB *p = myproc();
-    uint32 cwd = p->cwd_cluster;
+    uint32 dir_cluster = myproc()->cwd_cluster;
+    if (last_slash >= 0) {
+        char dir_part[64];
+        memcpy(dir_part, path, last_slash == 0 ? 1 : last_slash);
+        dir_part[last_slash == 0 ? 1 : last_slash] = '\0';
+        dir_cluster = get_path_cluster(dir_part);
+        if (dir_cluster == 0xFFFFFFFF) { release_lock(&fs_lock); return -1; }
+    }
 
     FAT32_DirEntry entry;
     uint32 sector;
     int idx;
 
-    if (find_dir_entry(cwd, fat_name, &entry, &sector, &idx) == 0) {
+    if (find_dir_entry(dir_cluster, fat_name, &entry, &sector, &idx) == 0) {
         // Found existing entry
         if (entry.attr & ATTR_DIRECTORY) {
             release_lock(&fs_lock);
@@ -550,8 +563,9 @@ int FS_CODE CreateHandler(char *path, int mode) {
         f->readable = 1;
         f->writable = 1; 
         f->offset = 0;
-        memcpy(f->name, path, 16);
+        memcpy(f->name, name_raw, 16);
         
+        PCB *p = myproc();
         for(int h = 0; h < MAX_HANDLES; h++) {
             if(p->handles[h] == 0) {
                 p->handles[h] = f;
@@ -566,7 +580,7 @@ int FS_CODE CreateHandler(char *path, int mode) {
     
     // Create new file
     if (mode & O_CREATE) {
-        if (find_free_dir_entry(cwd, &sector, &idx) == 0) {
+        if (find_free_dir_entry(dir_cluster, &sector, &idx) == 0) {
             uint32 cluster = alloc_cluster();
             if (cluster != 0) {
                 disk_read(sector, fs.cache_page, 1);
@@ -586,7 +600,8 @@ int FS_CODE CreateHandler(char *path, int mode) {
                     f->readable = 1;
                     f->writable = 1;
                     f->offset = 0;
-                    memcpy(f->name, path, 16);
+                    memcpy(f->name, name_raw, 16);
+                    PCB *p = myproc();
                     for(int h = 0; h < MAX_HANDLES; h++) {
                         if(p->handles[h] == 0) {
                             p->handles[h] = f;
@@ -795,7 +810,9 @@ void FS_CODE fs_ls() {
                 }
                 if (entry[i].attr & ATTR_DIRECTORY) buf[p_idx++] = ']';
                 buf[p_idx++] = ' '; buf[p_idx++] = ' '; buf[p_idx] = '\0';
+                release_lock(&fs_lock);
                 WriteFile(STDOUT, (uint8*)buf, strlen(buf));
+                accquire_lock(&fs_lock);
 
                 char sz_buf[16];
                 uint32 sz = entry[i].file_size;
@@ -808,7 +825,9 @@ void FS_CODE fs_ls() {
                     while (l > 0) sz_buf[k++] = temp[--l];
                 }
                 sz_buf[k++] = ' '; sz_buf[k++] = 'b'; sz_buf[k++] = 'y'; sz_buf[k++] = 't'; sz_buf[k++] = 'e'; sz_buf[k++] = 's'; sz_buf[k++] = '\n'; sz_buf[k] = '\0';
+                release_lock(&fs_lock);
                 WriteFile(STDOUT, (uint8*)sz_buf, strlen(sz_buf));
+                accquire_lock(&fs_lock);
             }
         }
         curr_cluster = get_next_cluster(curr_cluster);
@@ -817,16 +836,28 @@ done:
     release_lock(&fs_lock);
 }
 
-int FS_CODE fs_read_file_offset(char *filename, uint8 *out_buf, uint32 offset, uint32 max_len) {
+int FS_CODE fs_read_file_offset(char *path, uint8 *out_buf, uint32 offset, uint32 max_len) {
     char fat_name[11];
-    to_fat_name(filename, fat_name);
+    char name_raw[16];
+    
+    // Extract filename and directory cluster
+    int last_slash = -1;
+    for(int i=0; path[i]; i++) if(path[i] == '/') last_slash = i;
+    memcpy(name_raw, path + last_slash + 1, strlen(path + last_slash + 1) + 1);
+    to_fat_name(name_raw, fat_name);
 
     accquire_lock(&fs_lock);
-    PCB *p = myproc();
-    uint32 cwd = p ? p->cwd_cluster : fs.root_cluster;
+    uint32 dir_cluster = myproc() ? myproc()->cwd_cluster : fs.root_cluster;
+    if (last_slash >= 0) {
+        char dir_part[64];
+        memcpy(dir_part, path, last_slash == 0 ? 1 : last_slash);
+        dir_part[last_slash == 0 ? 1 : last_slash] = '\0';
+        dir_cluster = get_path_cluster(dir_part);
+        if (dir_cluster == 0xFFFFFFFF) { release_lock(&fs_lock); return -1; }
+    }
 
     FAT32_DirEntry target;
-    if (find_dir_entry(cwd, fat_name, &target, 0, 0) < 0) {
+    if (find_dir_entry(dir_cluster, fat_name, &target, 0, 0) < 0) {
         release_lock(&fs_lock);
         return -1;
     }
@@ -1030,6 +1061,116 @@ empty_check_done:
     FAT32_DirEntry *e = (FAT32_DirEntry*)fs.cache_page;
     e[idx].name[0] = 0xE5;
     disk_write(sector, fs.cache_page, 1);
+
+    release_lock(&fs_lock);
+    return 0;
+}
+
+// Helper to get the cluster of a directory by path
+static uint32 FS_CODE get_path_cluster(char *path) {
+    if (path[0] == '/' && path[1] == '\0') return fs.root_cluster;
+    
+    // Simple one-level or relative support for now based on project complexity
+    // If it starts with '/', start from root, else from CWD
+    uint32 curr_cluster = (path[0] == '/') ? fs.root_cluster : myproc()->cwd_cluster;
+    char *p = (path[0] == '/') ? path + 1 : path;
+    
+    char name[16];
+    while (*p) {
+        int i = 0;
+        while (*p && *p != '/') name[i++] = *p++;
+        name[i] = '\0';
+        if (*p == '/') p++;
+        
+        char fat_name[11];
+        to_fat_name(name, fat_name);
+        
+        FAT32_DirEntry entry;
+        if (find_dir_entry(curr_cluster, fat_name, &entry, 0, 0) < 0) return 0xFFFFFFFF;
+        if (!(entry.attr & ATTR_DIRECTORY)) return 0xFFFFFFFF;
+        
+        curr_cluster = (entry.first_cluster_hi << 16) | entry.first_cluster_lo;
+        if (curr_cluster == 0) curr_cluster = fs.root_cluster;
+    }
+    return curr_cluster;
+}
+
+int FS_CODE mv(char *oldpath, char *newpath) {
+    char old_fat[11], new_fat[11];
+    char old_name_raw[16];
+    
+    // Extract raw name from oldpath for "move into dir" case
+    int last_slash = -1;
+    for(int i=0; oldpath[i]; i++) if(oldpath[i] == '/') last_slash = i;
+    memcpy(old_name_raw, oldpath + last_slash + 1, strlen(oldpath + last_slash + 1) + 1);
+
+    to_fat_name(old_name_raw, old_fat);
+
+    accquire_lock(&fs_lock);
+    PCB *p = myproc();
+    uint32 src_dir = p->cwd_cluster; // Default to CWD for source
+    
+    // Resolve source directory if path contains slashes
+    if (last_slash >= 0) {
+        char dir_part[64];
+        memcpy(dir_part, oldpath, last_slash == 0 ? 1 : last_slash);
+        dir_part[last_slash == 0 ? 1 : last_slash] = '\0';
+        src_dir = get_path_cluster(dir_part);
+        if (src_dir == 0xFFFFFFFF) { release_lock(&fs_lock); return -1; }
+    }
+
+    FAT32_DirEntry old_entry;
+    uint32 old_sector;
+    int old_idx;
+
+    if (find_dir_entry(src_dir, old_fat, &old_entry, &old_sector, &old_idx) < 0) {
+        release_lock(&fs_lock);
+        return -1;
+    }
+
+    // Check if newpath is a directory
+    uint32 dest_dir = get_path_cluster(newpath);
+    if (dest_dir != 0xFFFFFFFF) {
+        // Move into directory: create new entry in dest_dir, delete from src_dir
+        uint32 new_sector;
+        int new_idx;
+        if (find_dir_entry(dest_dir, old_fat, 0, 0, 0) == 0) {
+            release_lock(&fs_lock);
+            return -1; // Already exists in target dir
+        }
+        
+        if (find_free_dir_entry(dest_dir, &new_sector, &new_idx) < 0) {
+            release_lock(&fs_lock);
+            return -1;
+        }
+        
+        // Write new entry
+        disk_read(new_sector, fs.cache_page, 1);
+        FAT32_DirEntry *e_new = (FAT32_DirEntry*)fs.cache_page;
+        e_new[new_idx] = old_entry;
+        disk_write(new_sector, fs.cache_page, 1);
+        
+        // Delete old entry
+        disk_read(old_sector, fs.cache_page, 1);
+        FAT32_DirEntry *e_old = (FAT32_DirEntry*)fs.cache_page;
+        e_old[old_idx].name[0] = 0xE5;
+        disk_write(old_sector, fs.cache_page, 1);
+        
+        release_lock(&fs_lock);
+        return 0;
+    }
+
+    // Standard Rename logic (same directory assumed if newpath isn't a dir)
+    to_fat_name(newpath, new_fat);
+    if (find_dir_entry(src_dir, new_fat, 0, 0, 0) == 0) {
+        release_lock(&fs_lock);
+        return -1; 
+    }
+
+    disk_read(old_sector, fs.cache_page, 1);
+    FAT32_DirEntry *e = (FAT32_DirEntry*)fs.cache_page;
+    memcpy(e[old_idx].name, new_fat, 11);
+    disk_write(old_sector, fs.cache_page, 1);
 
     release_lock(&fs_lock);
     return 0;

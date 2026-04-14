@@ -49,6 +49,7 @@ typedef int32              pid_t;
 #define SYS_CHDIR         25
 #define SYS_UNLINK        26
 #define SYS_GETCWD        27
+#define SYS_RENAME        28
 
 
 
@@ -61,7 +62,7 @@ void     close_handle(handle_t h);
 void     exit_process(int32 status);
 uint32   get_ticks(void);
 pid_t    get_pid(void);
-pid_t    spawn_process(const char *path, const char *redir_path);
+pid_t    spawn_process(const char *path, const char *args);
 int32    wait_process(pid_t pid);
 void     sys_panic();
 void     ls(void);
@@ -70,6 +71,7 @@ void     reboot(void);
 int32    mkdir(const char *path);
 int32    chdir(const char *path);
 int32    unlink(const char *path);
+int32    rename(const char *oldpath, const char *newpath);
 int32    get_cwd(void *buf,uint32 len);
 
 uint32   strlen(const char *s);

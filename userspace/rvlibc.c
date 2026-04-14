@@ -4,12 +4,12 @@
  * rvdos 系统库具体实现
  */
 
-extern void main();
+extern int main(int argc, char *argv[]);
 
 // 用户态程序的真正入口
-void __attribute__((section(".text.entry"))) _start() {
-    main();
-    exit_process(0);
+void __attribute__((section(".text.entry"))) _start(int argc, char *argv[]) {
+    int ret = main(argc, argv);
+    exit_process(ret);
 }
 
 // 底层汇编封装，供库函数内部使用
@@ -64,8 +64,8 @@ pid_t get_pid(void) {
     return (pid_t)syscall(SYS_GETPID, 0, 0, 0);
 }
 
-pid_t spawn_process(const char *path, const char *redir_path) {
-    return (pid_t)syscall(SYS_SPAWN, (uint64)path, (uint64)redir_path, 0);
+pid_t spawn_process(const char *path, const char *args) {
+    return (pid_t)syscall(SYS_SPAWN, (uint64)path, (uint64)args, 0);
 }
 
 int32 wait_process(pid_t pid) {
@@ -98,6 +98,10 @@ int32 chdir(const char *path) {
 
 int32 unlink(const char *path) {
     return (int32)syscall(SYS_UNLINK, (uint64)path, 0, 0);
+}
+
+int32 rename(const char *oldpath, const char *newpath) {
+    return (int32)syscall(SYS_RENAME, (uint64)oldpath, (uint64)newpath, 0);
 }
 
 // --- 基础工具函数 ---
