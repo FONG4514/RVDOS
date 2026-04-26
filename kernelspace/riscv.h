@@ -49,6 +49,10 @@
 
 #include "defs.h"
 
+#define BASE_EFF_PRIO 10
+#define SKIP_THRESHOLD 5
+#define MAX_EFF_PRIO 30
+
 // --- Machine Mode 寄存器操作 ---
 
 // CLINT 寄存器 (QEMU virt)

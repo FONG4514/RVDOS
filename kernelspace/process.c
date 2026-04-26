@@ -73,6 +73,7 @@ found:
   p->effective_priority = 10;
   p->skipped_count = 0;
   p->run_count = 0;
+  p->cpu_ticks = 0;
 
 
   // Initialize handles
@@ -169,10 +170,18 @@ void scheduler(void) {
       // We decrease it by 1 each time it finishes a quantum.
       p->run_count++;
 
-    if (p->run_count >= 5) {
+    if (p->run_count >= 3) {
         if (p->effective_priority > 1)
             p->effective_priority--;
         p->run_count = 0;
+    }
+
+    p->cpu_ticks++;
+
+    if (p->cpu_ticks % 2 == 0) {
+      if (p->effective_priority > 1)
+          p->effective_priority--;
+      p->cpu_ticks = 0;
     }
       p->skipped_count = 0; // Reset skip count since it just ran
 
@@ -191,6 +200,8 @@ void scheduler(void) {
                 }
                 p->skipped_count = 0; // Reset for next boost cycle
             }
+
+            if (p->effective_priority > MAX_EFF_PRIO) p->effective_priority = 20;
           }
           release_lock(&p->lock);
         }
@@ -269,12 +280,16 @@ void wakeup(void *chan) {
 
         p->state = RUNNABLE;
 
-        p->effective_priority += 5;
-        if (p->effective_priority > 100)
-            p->effective_priority = 100;
-
+        p->effective_priority += 2;
+        if (p->effective_priority < BASE_EFF_PRIO + 2) {
+          p->effective_priority += 1;
+        }
         p->skipped_count = 0;
 
+      }
+
+      if (p->effective_priority < BASE_EFF_PRIO || p->skipped_count >= SKIP_THRESHOLD) {
+        p->effective_priority = BASE_EFF_PRIO;
       }
       release_lock(&p->lock);
     }

@@ -164,6 +164,7 @@ typedef struct PCB {
     int effective_priority;   // Current priority
     int skipped_count;        // Scheduler skip count for aging
     int run_count;
+    int cpu_ticks;
     int exit_status;
     char name[16];
     uint32 cwd_cluster;
