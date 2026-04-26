@@ -72,8 +72,8 @@ found:
   p->priority = 10;     // Default base priority
   p->effective_priority = 10;
   p->skipped_count = 0;
-  p->run_count = 0;
-  p->cpu_ticks = 0;
+  p->cpu_usage = 0;
+
 
 
   // Initialize handles
@@ -165,46 +165,37 @@ void scheduler(void) {
       sfence_vma();
 
       c->proc = 0;
+      p->cpu_usage++;
+
+      if (p->cpu_usage >= 5) {
+          if (p->effective_priority > 1)
+              p->effective_priority--;
+
+          p->cpu_usage = 0;
+      }
+      p->skipped_count = 0;
+
       
-      // Priority Degradation: Decrease effective priority because it just used CPU
-      // We decrease it by 1 each time it finishes a quantum.
-      p->run_count++;
-
-    if (p->run_count >= 3) {
-        if (p->effective_priority > 1)
-            p->effective_priority--;
-        p->run_count = 0;
-    }
-
-    p->cpu_ticks++;
-
-    if (p->cpu_ticks % 2 == 0) {
-      if (p->effective_priority > 1)
-          p->effective_priority--;
-      p->cpu_ticks = 0;
-    }
-      p->skipped_count = 0; // Reset skip count since it just ran
-
       release_lock(&p->lock);
 
-      // Aging: only do this after a process runs to avoid excessive overhead
-      for(p = procs; p < &procs[64]; p++) {
-        if (p->state != RUNNING) {
-          accquire_lock(&p->lock);
+      for (p = procs; p < &procs[64]; p++) {
           if (p->state == RUNNABLE) {
-            p->skipped_count++;
-            // Aging: Boost effective priority every 5 skips, up to 100
-            if (p->skipped_count >= 5) {
-                if (p->effective_priority < 100) {
-                    p->effective_priority++;
-                }
-                p->skipped_count = 0; // Reset for next boost cycle
-            }
+              accquire_lock(&p->lock);
 
-            if (p->effective_priority > MAX_EFF_PRIO) p->effective_priority = 20;
+              p->skipped_count++;
+
+              if (p->skipped_count >= 5) {
+                  if (p->effective_priority < 100)
+                      p->effective_priority++;
+
+                  p->skipped_count = 0;
+              }
+
+              if (p->effective_priority < 3)
+                p->effective_priority = 3;
+
+              release_lock(&p->lock);
           }
-          release_lock(&p->lock);
-        }
       }
     }
   }
@@ -280,17 +271,13 @@ void wakeup(void *chan) {
 
         p->state = RUNNABLE;
 
-        p->effective_priority += 2;
-        if (p->effective_priority < BASE_EFF_PRIO + 2) {
+        if (p->effective_priority < BASE_EFF_PRIO + 5) {
           p->effective_priority += 1;
         }
         p->skipped_count = 0;
 
       }
 
-      if (p->effective_priority < BASE_EFF_PRIO || p->skipped_count >= SKIP_THRESHOLD) {
-        p->effective_priority = BASE_EFF_PRIO;
-      }
       release_lock(&p->lock);
     }
   }

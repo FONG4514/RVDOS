@@ -3,7 +3,7 @@
 #define DEFS_H
 
 #define MAXCPUCORE 8
-#define KERNEL_VERSION "tst1_0.6.0_std"
+#define KERNEL_VERSION "sd_0.6.0_std"
 
 #ifndef __ASSEMBLER__
 
@@ -163,8 +163,7 @@ typedef struct PCB {
     int priority;             // Base priority
     int effective_priority;   // Current priority
     int skipped_count;        // Scheduler skip count for aging
-    int run_count;
-    int cpu_ticks;
+    int cpu_usage;
     int exit_status;
     char name[16];
     uint32 cwd_cluster;
