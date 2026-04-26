@@ -961,6 +961,7 @@ int FS_CODE MakeDir(char *path) {
 
 int FS_CODE ChangeDir(char *path) {
     PCB *p = myproc();
+
     if (strcmp(path, "/") == 0) {
         p->cwd_cluster = fs.root_cluster;
         p->cwd_path[0] = '/';

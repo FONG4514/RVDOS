@@ -69,6 +69,11 @@ found:
   p->chan = 0;          // CRITICAL: Clear chan to avoid premature wakeup
   p->exit_status = 0;
   p->sz = 0;
+  p->priority = 10;     // Default base priority
+  p->effective_priority = 10;
+  p->skipped_count = 0;
+  p->run_count = 0;
+
 
   // Initialize handles
   for(int i = 0; i < 3; i++) {
@@ -124,35 +129,72 @@ void scheduler(void) {
 
     PCB *best = 0;
     for(p = procs; p < &procs[64]; p++) {
+      accquire_lock(&p->lock);
       if(p->state == RUNNABLE) {
-        if(best == 0 || p->pid < best->pid) {
+        if(best == 0 || p->effective_priority > best->effective_priority) {
+          if(best) release_lock(&best->lock);
           best = p;
+          continue; // Keep best locked
+        } else if (p->effective_priority == best->effective_priority && p->pid < best->pid) {
+          if(best) release_lock(&best->lock);
+          best = p;
+          continue; // Keep best locked
         }
       }
+      release_lock(&p->lock);
     }
 
     if(best) {
+      // best is already locked here
       p = best;
-      accquire_lock(&p->lock);
-      if(p->state == RUNNABLE) {
-        p->state = RUNNING;
-        c->proc = p;
-        
-        // Switch to process's page table
-        uint64 satp = (8L << 60) | ((uint64)p->pagetable >> 12);
-        w_satp(satp);
-        sfence_vma();
+      p->state = RUNNING;
+      
+      c->proc = p;
+      
+      // Switch to process's page table
+      uint64 satp = (8L << 60) | ((uint64)p->pagetable >> 12);
+      w_satp(satp);
+      sfence_vma();
 
-        swtch(&c->context, &p->sched_ctx);
+      swtch(&c->context, &p->sched_ctx);
 
-        // Process is done running for now.
-        // Switch back to kernel page table
-        w_satp((8L << 60) | ((uint64)kernel_pagetable >> 12));
-        sfence_vma();
+      // Process is done running for now.
+      // Switch back to kernel page table
+      w_satp((8L << 60) | ((uint64)kernel_pagetable >> 12));
+      sfence_vma();
 
-        c->proc = 0;
+      c->proc = 0;
+      
+      // Priority Degradation: Decrease effective priority because it just used CPU
+      // We decrease it by 1 each time it finishes a quantum.
+      p->run_count++;
+
+    if (p->run_count >= 5) {
+        if (p->effective_priority > 1)
+            p->effective_priority--;
+        p->run_count = 0;
+    }
+      p->skipped_count = 0; // Reset skip count since it just ran
+
+      release_lock(&p->lock);
+
+      // Aging: only do this after a process runs to avoid excessive overhead
+      for(p = procs; p < &procs[64]; p++) {
+        if (p->state != RUNNING) {
+          accquire_lock(&p->lock);
+          if (p->state == RUNNABLE) {
+            p->skipped_count++;
+            // Aging: Boost effective priority every 5 skips, up to 100
+            if (p->skipped_count >= 5) {
+                if (p->effective_priority < 100) {
+                    p->effective_priority++;
+                }
+                p->skipped_count = 0; // Reset for next boost cycle
+            }
+          }
+          release_lock(&p->lock);
+        }
       }
-      release_lock(&best->lock);
     }
   }
 }
@@ -224,7 +266,15 @@ void wakeup(void *chan) {
     if(p != myproc()){
       accquire_lock(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
+
         p->state = RUNNABLE;
+
+        p->effective_priority += 5;
+        if (p->effective_priority > 100)
+            p->effective_priority = 100;
+
+        p->skipped_count = 0;
+
       }
       release_lock(&p->lock);
     }
@@ -337,7 +387,7 @@ int spawn(char *path, char *args) {
     if(ph.vaddr + ph.memsz < ph.vaddr)
       goto bad;
     
-    // Allocate and map memory for the segment
+    // Allocate and map memory for the segment, solve .BSS
     for(uint64 j = 0; j < ph.memsz; j += PGSIZE){
       char *mem = kalloc();
       if(mem == 0) goto bad;
@@ -369,6 +419,15 @@ int spawn(char *path, char *args) {
   p->sz = PGROUNDUP(sz);
   p->context->epc = elf.entry;      // user program counter
   
+  // Extract filename from path and store in p->name
+  int last_slash = -1;
+  for(int i = 0; path[i]; i++) if(path[i] == '/') last_slash = i;
+  char *filename = path + last_slash + 1;
+  int name_len = strlen(filename);
+  if(name_len > 15) name_len = 15;
+  memcpy(p->name, filename, name_len);
+  p->name[name_len] = '\0';
+
   // Allocate one more page for stack
   char *stack = kalloc();
   if (stack) {
@@ -483,3 +542,30 @@ void forkret(void) {
 
   user_trap_return();
 }
+
+int growproc(int n) {
+  uint64 sz;
+  PCB *p = myproc();
+
+  accquire_lock(&p->lock);
+  sz = p->sz;
+  if(n > 0){
+    for(uint64 a = PGROUNDUP(sz); a < sz + n; a += PGSIZE){
+      char *mem = kalloc();
+      if(mem == 0){
+        release_lock(&p->lock);
+        return -1;
+      }
+      memset(mem, 0, PGSIZE);
+      if(mappages(p->pagetable, a, (uint64)mem, PGSIZE, PTE_W|PTE_R|PTE_U) < 0){
+        kfree(mem);
+        release_lock(&p->lock);
+        return -1;
+      }
+    }
+  }
+  p->sz += n;
+  release_lock(&p->lock);
+  return 0;
+}
+

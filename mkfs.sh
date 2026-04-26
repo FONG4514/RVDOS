@@ -38,7 +38,7 @@ CFLAGS="-Wall -O0 -ffreestanding -nostdlib -fno-common -mcmodel=medany -mno-rela
 ${CC} ${CFLAGS} -c ${USER_DIR}/rvlibc.c -o ${BUILD_DIR}/rvlibc.o
 
 # 定义所有要编译的程序
-PROGRAMS=("shell" "panic" "ls" "bench" "mkdir" "rm" "mv" "cat" "echo" "clear" "poweroff" "reboot")
+PROGRAMS=("shell" "panic" "ls" "bench" "mkdir" "rm" "mv" "cat" "echo" "clear" "poweroff" "reboot" "ps" "loop")
 
 for PROG in "${PROGRAMS[@]}"; do
     echo "编译 ${PROG}..."

@@ -19,11 +19,12 @@ int strcasecmp(const char *s1, const char *s2) {
 }
 
 void help() {
-    print_str("Available commands:\n");
-    print_str("  help         - Show this help message\n");
-    print_str("  cd [dir]     - Change current directory\n");
-    print_str("  exit         - Exit the shell\n");
-    print_str("  [program]    - Execute a program (searches /usr/ first)\n");
+    printf("Available commands:\n");
+    printf("  help         - Show this help message\n");
+    printf("  cd [dir]     - Change current directory\n");
+    printf("  exit         - Exit the shell\n");
+    printf("  [cmd] &      - Run command in background\n");
+    printf("  [program]    - Execute a program (searches /usr/ first)\n");
 }
 
 void main() {
@@ -31,22 +32,35 @@ void main() {
     char cwd_buf[128];
     char cmd_path[160];
     char *arg;
+    int background;
 
-    print_str("\n--- RVDOS Shell ---\n");
-    print_str("Type 'help' for a list of commands.\n");
+    printf("\n--- RVDOS Shell ---\n");
+    printf("Type 'help' for a list of commands.\n");
 
     while (1) {
-        print_str("[");
         if (get_cwd(cwd_buf, sizeof(cwd_buf)) == 0) {
-            print_str(cwd_buf);
+            printf("[%s] # ", cwd_buf);
+        } else {
+            printf("[] # ");
         }
-        print_str("]");
-        print_str(" # ");
+        
         gets(buf, sizeof(buf));
         
         int len = strlen(buf);
         while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r')) {
             buf[--len] = '\0';
+        }
+
+        if (buf[0] == '\0') continue;
+
+        // Check for background execution
+        background = 0;
+        if (len > 0 && buf[len-1] == '&') {
+            background = 1;
+            buf[--len] = '\0';
+            while (len > 0 && buf[len-1] == ' ') {
+                buf[--len] = '\0';
+            }
         }
 
         if (buf[0] == '\0') continue;
@@ -67,7 +81,7 @@ void main() {
             help();
         } else if (strcasecmp(buf, "cd") == 0) {
             if (arg) {
-                if (chdir(arg) < 0) print_str("cd failed\n");
+                if (chdir(arg) < 0) printf("cd failed\n");
             } else {
                 chdir("/");
             }
@@ -87,13 +101,15 @@ void main() {
             }
 
             if (pid < 0) {
-                print_str("Unknown command: ");
-                print_str(buf);
-                print_str("\n");
+                printf("Unknown command: %s\n", buf);
             } else {
-                wait_process(pid);
+                if (background) {
+                    printf("[PID %d] started in background\n", pid);
+                } else {
+                    wait_process(pid);
+                }
             }
         }
     }
-    print_str("Shell exiting...\n");
+    printf("Shell exiting...\n");
 }

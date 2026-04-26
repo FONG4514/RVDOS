@@ -132,7 +132,9 @@ uint64 sys_getcwd(void) {
     PCB *p = myproc();
     char *buf = (char*)p->context->a0;
     uint32 len = (uint32)p->context->a1;
-    if (buf == 0) return -1;
+    if (buf == 0) {
+        return -1;
+    }
 
     uint64 old_sstatus = r_sstatus();
     w_sstatus(old_sstatus | SSTATUS_SUM);
@@ -145,6 +147,7 @@ uint64 sys_getcwd(void) {
     buf[i] = '\0';
     
     w_sstatus(old_sstatus);
+    // printf("sys_getcwd: returning %s\n", p->cwd_path);
     return 0;
 }
 
@@ -196,6 +199,7 @@ uint64 sys_wait(void) {
 }
 
 uint64 sys_ls(void) {
+    // printf("sys_ls: calling fs_ls()\n");
     fs_ls();
     return 0;
 }
@@ -321,6 +325,52 @@ uint64 sys_unlink(void) {
     return Unlink(kpath);
 }
 
+uint64 sys_ps(void) {
+    PCB *my_p = myproc();
+    proc_info_t *user_info = (proc_info_t*)my_p->context->a0;
+    uint32 max = (uint32)my_p->context->a1;
+    
+    if (user_info == 0) return -1;
+
+    proc_info_t kinfo;
+    uint32 count = 0;
+
+    extern PCB procs[64];
+    for(int i = 0; i < 64 && count < max; i++) {
+        accquire_lock(&procs[i].lock);
+        if (procs[i].state != UNUSED) {
+            kinfo.pid = procs[i].pid;
+            memcpy(kinfo.name, procs[i].name, 16);
+            kinfo.priority = procs[i].priority;
+            kinfo.effective_priority = procs[i].effective_priority;
+            kinfo.state = procs[i].state;
+            
+            // Access user memory safely while keeping interrupt state intact
+            uint64 s = r_sstatus();
+            w_sstatus(s | SSTATUS_SUM);
+            memcpy(&user_info[count], &kinfo, sizeof(proc_info_t));
+            w_sstatus(s);
+            
+            count++;
+        }
+        release_lock(&procs[i].lock);
+    }
+    
+    return count;
+}
+
+uint64 sys_sbrk(void) {
+  int n;
+  uint64 addr;
+  PCB *p = myproc();
+
+  n = (int)p->context->a0;
+  addr = p->sz;
+  if(growproc(n) < 0)
+    return -1;
+  return addr;
+}
+
 uint64 sys_rename(void) {
     PCB *p = myproc();
     char *oldpath = (char*)p->context->a0;
@@ -370,7 +420,9 @@ syscall_t syscall_table[64] = {
     [SYS_CHDIR]        = sys_chdir,
     [SYS_UNLINK]       = sys_unlink,
     [SYS_GETCWD]       = sys_getcwd,
-    [SYS_RENAME]       = sys_rename
+    [SYS_RENAME]       = sys_rename,
+    [SYS_PS]           = sys_ps,
+    [SYS_SBRK]         = sys_sbrk
 };
 
 void syscall_dispatcher(void) {

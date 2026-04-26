@@ -3,7 +3,7 @@
 #define DEFS_H
 
 #define MAXCPUCORE 8
-#define KERNEL_VERSION "sd_0.5.3_std"
+#define KERNEL_VERSION "tst1_0.6.0_std"
 
 #ifndef __ASSEMBLER__
 
@@ -125,6 +125,16 @@ typedef struct user_context {
 #define SYS_UNLINK        26
 #define SYS_GETCWD        27
 #define SYS_RENAME        28
+#define SYS_PS            29
+#define SYS_SBRK          30
+
+typedef struct proc_info {
+    int pid;
+    char name[16];
+    int priority;
+    int effective_priority;
+    int state;
+} proc_info_t;
 
 #define MAX_HANDLES 16
 #define STDOUT 1
@@ -150,6 +160,10 @@ typedef struct PCB {
     user_context_t *context;  // Trapframe
     struct context sched_ctx; // Swtch context
     int pid;
+    int priority;             // Base priority
+    int effective_priority;   // Current priority
+    int skipped_count;        // Scheduler skip count for aging
+    int run_count;
     int exit_status;
     char name[16];
     uint32 cwd_cluster;
@@ -176,6 +190,9 @@ void            exit(int status);
 int             spawn(char *path, char *redir_path);
 int             wait(int pid);
 void            forkret(void);
+void            sleep(void *chan, spinlock_t *lk);
+void            wakeup(void *chan);
+int             growproc(int n);
 
 // mylibc.c
 void*           memcpy(void *dst, const void *src, uint n);

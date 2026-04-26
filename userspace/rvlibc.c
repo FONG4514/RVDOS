@@ -1,4 +1,5 @@
 #include "rvdos.h"
+#include <stdarg.h>
 
 /**
  * rvdos 系统库具体实现
@@ -41,7 +42,11 @@ int32 file_read(handle_t h, void *buf, uint32 len) {
 }
 
 int32 get_cwd(void *buf,uint32 len) {
-    return (int32)syscall(SYS_GETCWD, (uint64)buf, (uint64)len,0);
+    int32 ret = (int32)syscall(SYS_GETCWD, (uint64)buf, (uint64)len,0);
+    if (ret != 0) {
+        print_str("get_cwd syscall failed\n");
+    }
+    return ret;
 }
 
 int32 file_write(handle_t h, const void *buf, uint32 len) {
@@ -102,6 +107,87 @@ int32 unlink(const char *path) {
 
 int32 rename(const char *oldpath, const char *newpath) {
     return (int32)syscall(SYS_RENAME, (uint64)oldpath, (uint64)newpath, 0);
+}
+
+int32 ps(proc_info_t *info, uint32 max) {
+    return (int32)syscall(SYS_PS, (uint64)info, (uint64)max, 0);
+}
+
+void* sbrk(int n) {
+    return (void*)syscall(SYS_SBRK, (uint64)n, 0, 0);
+}
+
+// Memory allocator (K&R style simple free-list)
+typedef long Align;
+union header {
+  struct {
+    union header *ptr;
+    unsigned size;
+  } s;
+  Align x;
+};
+typedef union header Header;
+
+static Header base;
+static Header *freep;
+
+void free(void *ap) {
+  Header *bp, *p;
+  bp = (Header *)ap - 1;
+  for (p = freep; !(bp > p && bp < p->s.ptr); p = p->s.ptr)
+    if (p >= p->s.ptr && (bp > p || bp < p->s.ptr))
+      break;
+  if (bp + bp->s.size == p->s.ptr) {
+    bp->s.size += p->s.ptr->s.size;
+    bp->s.ptr = p->s.ptr->s.ptr;
+  } else
+    bp->s.ptr = p->s.ptr;
+  if (p + p->s.size == bp) {
+    p->s.size += bp->s.size;
+    p->s.ptr = bp->s.ptr;
+  } else
+    p->s.ptr = bp;
+  freep = p;
+}
+
+static Header* morecore(unsigned nu) {
+  char *cp;
+  Header *up;
+  if (nu < 4096)
+    nu = 4096;
+  cp = sbrk(nu * sizeof(Header));
+  if (cp == (char *)-1)
+    return 0;
+  up = (Header *)cp;
+  up->s.size = nu;
+  free((void *)(up + 1));
+  return freep;
+}
+
+void* malloc(uint32 nbytes) {
+  Header *p, *prevp;
+  unsigned nunits;
+  nunits = (nbytes + sizeof(Header) - 1) / sizeof(Header) + 1;
+  if ((prevp = freep) == 0) {
+    base.s.ptr = freep = prevp = &base;
+    base.s.size = 0;
+  }
+  for (p = prevp->s.ptr; ; prevp = p, p = p->s.ptr) {
+    if (p->s.size >= nunits) {
+      if (p->s.size == nunits)
+        prevp->s.ptr = p->s.ptr;
+      else {
+        p->s.size -= nunits;
+        p = p + p->s.size;
+        p->s.size = nunits;
+      }
+      freep = prevp;
+      return (void *)(p + 1);
+    }
+    if (p == freep)
+      if ((p = morecore(nunits)) == 0)
+        return 0;
+  }
 }
 
 // --- 基础工具函数 ---
@@ -181,4 +267,61 @@ void print_int(int32 n) {
     }
     
     file_write(STDOUT, out, j);
+}
+
+void print_hex(uint64 n) {
+    char buf[1];
+    char *hex = "0123456789abcdef";
+    int i;
+    
+    print_str("0x");
+    // Simple version: always print 16 chars for 64-bit
+    for (i = 15; i >= 0; i--) {
+        buf[0] = hex[(n >> (i * 4)) & 0xf];
+        file_write(STDOUT, buf, 1);
+    }
+}
+
+void printf(const char *fmt, ...) {
+  va_list ap;
+  int i, c;
+  char *s;
+
+  va_start(ap, fmt);
+  for (i = 0; (c = fmt[i] & 0xff) != 0; i++) {
+    if (c != '%') {
+      char b[1];
+      b[0] = c;
+      file_write(STDOUT, b, 1);
+      continue;
+    }
+    
+    // Skip flags like '-' or numbers
+    i++;
+    while (fmt[i] == '-' || (fmt[i] >= '0' && fmt[i] <= '9')) {
+        i++;
+    }
+
+    c = fmt[i] & 0xff;
+    if (c == 0)
+      break;
+    switch (c) {
+    case 'd':
+      print_int(va_arg(ap, int));
+      break;
+    case 'x':
+    case 'p': // Add %p support for pointers
+      print_hex(va_arg(ap, uint64));
+      break;
+    case 's':
+      if ((s = va_arg(ap, char *)) == 0)
+        s = "(null)";
+      print_str(s);
+      break;
+    case '%':
+      print_str("%");
+      break;
+    }
+  }
+  va_end(ap);
 }

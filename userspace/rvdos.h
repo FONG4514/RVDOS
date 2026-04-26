@@ -50,7 +50,16 @@ typedef int32              pid_t;
 #define SYS_UNLINK        26
 #define SYS_GETCWD        27
 #define SYS_RENAME        28
+#define SYS_PS            29
+#define SYS_SBRK          30
 
+typedef struct proc_info {
+    int pid;
+    char name[16];
+    int priority;
+    int effective_priority;
+    int state;
+} proc_info_t;
 
 
 // function
@@ -73,6 +82,10 @@ int32    chdir(const char *path);
 int32    unlink(const char *path);
 int32    rename(const char *oldpath, const char *newpath);
 int32    get_cwd(void *buf,uint32 len);
+int32    ps(proc_info_t *info, uint32 max);
+void*    sbrk(int n);
+void*    malloc(uint32 size);
+void     free(void *ptr);
 
 uint32   strlen(const char *s);
 void     print_str(const char *s);
@@ -80,5 +93,6 @@ void     print_int(int32 n);
 int      strcmp(const char *p, const char *q);
 int      strncmp(const char *p, const char *q, uint32 n);
 char*    gets(char *buf, int max);
+void     printf(const char *fmt, ...);
 
 #endif // RVDOS_H
