@@ -1,9 +1,7 @@
-#include "riscv.h"
-#include "defs.h"
-#include "proc.h"
+#include <kernel.h>
 
 struct cpu cpus[MAXCPUCORE];
-PCB procs[64]; // Max 64 processes for now
+PCB procs[MAXPROCESSES];
 
 struct {
   spinlock_t lock;

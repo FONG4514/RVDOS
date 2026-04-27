@@ -1,6 +1,4 @@
-#include"defs.h"
-#include"proc.h"
-#include"riscv.h"
+#include <kernel.h>
 
 void init_lock(spinlock_t * lock , char * lock_name) {
     lock->lock_name = lock_name;

@@ -1,5 +1,4 @@
-#include "defs.h"
-#include "riscv.h"
+#include <kernel.h>
 
 #define FS_CODE __attribute__((section(".fs_code")))
 #define FS_DATA __attribute__((section(".fs_data")))

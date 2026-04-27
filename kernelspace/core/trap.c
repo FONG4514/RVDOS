@@ -1,6 +1,4 @@
-#include "riscv.h"
-#include "defs.h"
-#include "proc.h"
+#include <kernel.h>
 
 struct trap_info {
     spinlock_t trap_lock;
@@ -13,37 +11,10 @@ extern void fast_user_vector();
 extern int console_read(uint8 *buf, int n);
 extern void uart_putc_no_lock(char c);
 
+extern const rvdos_abi_info_t KERNEL_ABI_INFO;
+
 uint64 ticks = 0;
 spinlock_t tick_lock;
-
-// --- PLIC implementation ---
-void plic_init() {
-  // set UART's priority to 1.
-  *(uint32*)(PLIC_PRIORITY + UART0_IRQ*4) = 1;
-  // set VIRTIO's priority to 1.
-  *(uint32*)(PLIC_PRIORITY + VIRTIO0_IRQ*4) = 1;
-}
-
-void plic_inithart() {
-  int hart = r_tp();
-  // set uart's enable bit for this hart's S-mode. 
-  *(uint32*)PLIC_SENABLE(hart) = (1 << UART0_IRQ) | (1 << VIRTIO0_IRQ);
-  // set this hart's S-mode priority threshold to 0.
-  *(uint32*)PLIC_SPRIORITY(hart) = 0;
-}
-
-// ask the PLIC what interrupt we should serve.
-int plic_claim() {
-  int hart = r_tp();
-  int irq = *(uint32*)PLIC_SCLAIM(hart);
-  return irq;
-}
-
-// tell the PLIC we've served this IRQ.
-void plic_complete(int irq) {
-  int hart = r_tp();
-  *(uint32*)PLIC_SCLAIM(hart) = irq;
-}
 
 // --- Interrupt Handling Table ---
 
@@ -399,9 +370,23 @@ uint64 sys_trap(void) {
     return 0;
 }
 
+uint64 sys_get_abi_info(void) {
+    PCB *proc = myproc();
+    rvdos_abi_info_t *info = (rvdos_abi_info_t *)proc->context->a1;
+
+    uint64 old_sstatus = r_sstatus();
+    w_sstatus(old_sstatus | SSTATUS_SUM);
+
+    memcpy(info,&KERNEL_ABI_INFO,sizeof(rvdos_abi_info_t));
+
+    w_sstatus(old_sstatus);
+    return 0;
+}
+
 // System call table
 // You can expand this by adding entries like [SYS_READ] = sys_read,
 syscall_t syscall_table[64] = {
+    [SYS_GET_ABI_INFO] = sys_get_abi_info,
     [SYS_TRAP]         = sys_trap,
     [SYS_GET_TICKS]    = sys_get_ticks,
     [SYS_SPAWN]        = sys_spawn,
@@ -541,8 +526,4 @@ void user_trap_return() {
     // The scheduler switched to p->pagetable.
     uint64 fn = TRAMPOLINE + ((uint64)user_ret - (uint64)user_vector);
     ((void (*)(uint64))fn)(TRAPFRAME);
-}
-
-int intr_get() {
-    return (r_sstatus() & SSTATUS_SIE) != 0;
 }

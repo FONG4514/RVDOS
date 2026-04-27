@@ -195,7 +195,7 @@ void* malloc(uint32 nbytes) {
 int strcmp(const char *p, const char *q) {
   while(*p && *p == *q)
     p++, q++;
-  return (uchar)*p - (uchar)*q;
+  return (uint8)*p - (uint8)*q;
 }
 
 int strncmp(const char *p, const char *q, uint32 n) {
@@ -203,7 +203,7 @@ int strncmp(const char *p, const char *q, uint32 n) {
     n--, p++, q++;
   if(n == 0)
     return 0;
-  return (uchar)*p - (uchar)*q;
+  return (uint8)*p - (uint8)*q;
 }
 
 char* gets(char *buf, int max) {

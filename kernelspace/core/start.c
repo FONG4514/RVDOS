@@ -1,4 +1,5 @@
-#include "riscv.h"
+#include <kernel.h>
+
 __attribute__ ((aligned (16))) char stack0[4096 * 8]; // Support up to 8 harts
 
 // a scratch area per CPU for machine-mode timer interrupts.

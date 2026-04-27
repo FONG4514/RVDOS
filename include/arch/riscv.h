@@ -1,9 +1,8 @@
-#ifndef __RISCV_ASM__
-#define __RISCV_ASM__
+#ifndef RVDOS_ARCH_RISCV_H   // 注意这里的宏名要唯一
+#define RVDOS_ARCH_RISCV_H
 
-// --- 说明：硬件相关的宏定义，C 和汇编通用 ---
+#include <abi/types.h>
 
-// mstatus 掩码
 #define MSTATUS_MPP_MASK (3L << 11)
 #define MSTATUS_MPP_M    (3L << 11)
 #define MSTATUS_MPP_S    (1L << 11)
@@ -30,6 +29,7 @@
 #define MAXVA (1L << 38)
 #define TRAMPOLINE (MAXVA - PGSIZE)
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
+#define PHYSTOP (0x80000000L + 128*1024*1024)
 // --- PLIC (Platform Level Interrupt Controller) ---
 #define PLIC 0x0c000000L
 #define SYSCON 0x100000L
@@ -45,20 +45,39 @@
 #define UART0_IRQ 10
 #define VIRTIO0_IRQ 1
 
-#ifndef __ASSEMBLER__
-
-#include "defs.h"
-
-#define BASE_EFF_PRIO 10
-#define SKIP_THRESHOLD 5
-#define MAX_EFF_PRIO 30
-
-// --- Machine Mode 寄存器操作 ---
-
-// CLINT 寄存器 (QEMU virt)
 #define CLINT 0x2000000L
 #define CLINT_MTIMECMP(hartid) (CLINT + 0x4000 + 8*(hartid))
 #define CLINT_MTIME (CLINT + 0xBFF8) // 64-bit register
+
+#ifndef __ASSEMBLER__
+
+// --- 寄存器操作 ---
+
+static inline uint64 r_sstatus() {
+  uint64 x;
+  asm volatile("csrr %0, sstatus" : "=r" (x));
+  return x;
+}
+
+static inline void w_sstatus(uint64 x) {
+  asm volatile("csrw sstatus, %0" : : "r" (x));
+}
+
+static inline void intr_on() {
+    asm volatile("csrsi sstatus, %0" : : "i"(SSTATUS_SIE));
+}
+
+static inline void intr_off() {
+    asm volatile("csrci sstatus, %0" : : "i"(SSTATUS_SIE));
+}
+
+// 判断当前中断是否开启
+static inline int intr_get() {
+    return (r_sstatus() & SSTATUS_SIE) != 0;
+}
+
+// CLINT 寄存器 (QEMU virt)
+
 
 static inline uint64 r_mstatus() {
   uint64 x;
@@ -149,15 +168,7 @@ static inline void sfence_vma() {
   asm volatile("sfence.vma zero, zero");
 }
 
-static inline uint64 r_sstatus() {
-  uint64 x;
-  asm volatile("csrr %0, sstatus" : "=r" (x));
-  return x;
-}
 
-static inline void w_sstatus(uint64 x) {
-  asm volatile("csrw sstatus, %0" : : "r" (x));
-}
 
 static inline void w_stvec(uint64 x) {
   asm volatile("csrw stvec, %0" : : "r" (x));
@@ -211,6 +222,22 @@ static inline void w_sip(uint64 x) {
   asm volatile("csrw sip, %0" : : "r" (x));
 }
 
+static inline void w_tp(uint64 x) {
+  asm volatile("mv tp, %0" : : "r" (x));
+}
+
+static inline uint64 r_tp() {
+  uint64 x;
+  asm volatile("mv %0, tp" : "=r" (x));
+  return x;
+}
+
+static inline uint64 r_sp() {
+  uint64 x;
+  asm volatile("mv %0, sp" : "=r" (x));
+  return x;
+}
+
 // Supervisor-mode Interrupt Enable
 #define SIE_SEIE (1L << 9) // external
 #define SIE_STIE (1L << 5) // timer
@@ -239,66 +266,68 @@ static inline void w_sie(uint64 x) {
 #define PXSHIFT(level)  (PGSHIFT + (9*(level)))
 #define PX(level, va) ((((uint64)va) >> PXSHIFT(level)) & PXMASK)
 
-// --- ELF 64 ---
-#define ELF_MAGIC 0x464C457FU  // "\x7FELF" in little endian
+typedef uint64 pte_t;
+typedef uint64 *pagetable_t;
 
-// File header
-struct elfhdr {
-  uint32 magic;  // must equal ELF_MAGIC
-  uint8 elf[12];
-  uint16 type;
-  uint16 machine;
-  uint32 version;
-  uint64 entry;
-  uint64 phoff;
-  uint64 shoff;
-  uint32 flags;
-  uint16 ehsize;
-  uint16 phentsize;
-  uint16 phnum;
-  uint16 shentsize;
-  uint16 shnum;
-  uint16 shstrndx;
+// Saved registers for kernel context switches.
+struct context {
+  uint64 ra;
+  uint64 sp;
+
+  // callee-saved
+  uint64 s0;
+  uint64 s1;
+  uint64 s2;
+  uint64 s3;
+  uint64 s4;
+  uint64 s5;
+  uint64 s6;
+  uint64 s7;
+  uint64 s8;
+  uint64 s9;
+  uint64 s10;
+  uint64 s11;
 };
 
-// Program section header
-struct proghdr {
-  uint32 type;
-  uint32 flags;
-  uint64 off;
-  uint64 vaddr;
-  uint64 paddr;
-  uint64 filesz;
-  uint64 memsz;
-  uint64 align;
-};
+typedef struct user_context {
+  /*   0 */ uint64 kernel_satp;   // kernel page table
+  /*   8 */ uint64 kernel_sp;     // top of process's kernel stack
+  /*  16 */ uint64 kernel_trap;   // usertrap()
+  /*  24 */ uint64 epc;           // saved user program counter
+  /*  32 */ uint64 kernel_hartid; // saved kernel tp
+  /*  40 */ uint64 ra;
+  /*  48 */ uint64 sp;
+  /*  56 */ uint64 gp;
+  /*  64 */ uint64 tp;
+  /*  72 */ uint64 t0;
+  /*  80 */ uint64 t1;
+  /*  88 */ uint64 t2;
+  /*  96 */ uint64 s0;
+  /* 104 */ uint64 s1;
+  /* 112 */ uint64 a0;
+  /* 120 */ uint64 a1;
+  /* 128 */ uint64 a2;
+  /* 136 */ uint64 a3;
+  /* 144 */ uint64 a4;
+  /* 152 */ uint64 a5;
+  /* 160 */ uint64 a6;
+  /* 168 */ uint64 a7;
+  /* 176 */ uint64 s2;
+  /* 184 */ uint64 s3;
+  /* 192 */ uint64 s4;
+  /* 200 */ uint64 s5;
+  /* 208 */ uint64 s6;
+  /* 216 */ uint64 s7;
+  /* 224 */ uint64 s8;
+  /* 232 */ uint64 s9;
+  /* 240 */ uint64 s10;
+  /* 248 */ uint64 s11;
+  /* 256 */ uint64 t3;
+  /* 264 */ uint64 t4;
+  /* 272 */ uint64 t5;
+  /* 280 */ uint64 t6;
+} user_context_t;
 
-// Values for proghdr type
-#define ELF_PROG_LOAD           1
 
-// Flag bits for proghdr flags
-#define ELF_PROG_FLAG_EXEC      1
-#define ELF_PROG_FLAG_WRITE     2
-#define ELF_PROG_FLAG_READ      4
-
-// --- 寄存器操作 ---
-
-static inline void w_tp(uint64 x) {
-  asm volatile("mv tp, %0" : : "r" (x));
-}
-
-static inline uint64 r_tp() {
-  uint64 x;
-  asm volatile("mv %0, tp" : "=r" (x));
-  return x;
-}
-
-static inline uint64 r_sp() {
-  uint64 x;
-  asm volatile("mv %0, sp" : "=r" (x));
-  return x;
-}
-
-#endif // __ASSEMBLER__
-
-#endif // __RISCV_ASM__
+#endif
+#endif

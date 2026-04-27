@@ -1,4 +1,4 @@
-#include "riscv.h"
+#include <arch/riscv.h>
 
 .globl kernel_vector
 .globl user_vector

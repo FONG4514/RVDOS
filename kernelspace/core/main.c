@@ -1,5 +1,4 @@
-#include "riscv.h"
-#include "defs.h"
+#include <kernel.h>
 
 extern void uart_init();
 extern void printf(char *fmt, ...);
@@ -8,6 +7,12 @@ extern uint64 ticks;
 extern spinlock_t tick_lock;
 
 volatile static int started = 0;
+
+const rvdos_abi_info_t KERNEL_ABI_INFO = {
+    .abi_version = RVDOS_ABI_V1,
+    .caps = CAP_FS_BASIC | CAP_FS_DIR | CAP_FS_CWD | 
+            CAP_PROC_BASIC | CAP_MEM_SBRK | CAP_SYS_TIME
+};
 
 void read_icon(uint8* icon_buf) {
     if (icon_buf) {

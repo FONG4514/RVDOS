@@ -1,6 +1,4 @@
-#include "defs.h"
-#include "riscv.h"
-#include "proc.h"
+#include <kernel.h>
 
 // push_off/pop_off are like intr_off/intr_on except they are matched:
 // it takes two pop_off()s to undo two push_off()s.  Also, if interrupts

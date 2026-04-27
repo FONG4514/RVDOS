@@ -1,6 +1,6 @@
 #include <stdarg.h>
-#include "riscv.h"
-#include "defs.h"
+#include <kernel.h>
+
 #define UART0 0x10000000L
 #define REG(reg) ((volatile unsigned char *)(UART0 + reg))
 
@@ -25,9 +25,9 @@ int uart_inited = 0;
 struct {
   spinlock_t lock;
   char buf[INPUT_BUF_SIZE];
-  uint r;  // Read index
-  uint w;  // Write index
-  uint e;  // Edit index
+  uint32 r;  // Read index
+  uint32 w;  // Write index
+  uint32 e;  // Edit index
 } cons;
 
 void uart_init() {

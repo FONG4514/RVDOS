@@ -1,5 +1,4 @@
-#include "riscv.h"
-#include "defs.h"
+#include <kernel.h>
 
 pagetable_t kernel_pagetable;
 

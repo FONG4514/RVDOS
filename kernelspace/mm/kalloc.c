@@ -1,5 +1,4 @@
-#include "defs.h"
-#include "riscv.h"
+#include <kernel.h>
 
 extern char end[]; // first address after kernel.
 

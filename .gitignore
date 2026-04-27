@@ -5,3 +5,4 @@ kernel.elf
 kernel.asm
 qemu.log
 build_user/
+.vscode/
