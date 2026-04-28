@@ -15,7 +15,7 @@ CFLAGS += -march=rv64gc_zihintpause -mabi=lp64
 CFLAGS += -fno-stack-protector
 CFLAGS += -fno-pie -no-pie
 
-# 头文件路径（你这次拆分是正确的）
+# 头文件路径
 CFLAGS += -Iinclude -Ikernelspace/include
 
 LDFLAGS = -z max-page-size=4096

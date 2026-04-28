@@ -1,6 +1,6 @@
-#include "rvdos.h"
+#include <stdio.h>
 
 int main() {
-    for(int i = 0; i < 50; i++) print_str("\n");
+    for(int i = 0; i < 50; i++) printf("\n");
     return 0;
 }

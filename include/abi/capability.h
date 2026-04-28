@@ -17,6 +17,8 @@
 // Process
 #define CAP_PROC_BASIC      (1 << 8)  // spawn/exit/wait
 #define CAP_PROC_PS         (1 << 9)
+#define CAP_PROC_KILL       (1 << 10)
+#define CAP_PROC_SLEEP      (1 << 11)
 
 // Memory
 #define CAP_MEM_SBRK        (1 << 16) // sbrk()

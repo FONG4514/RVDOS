@@ -1,16 +1,16 @@
-#include "rvdos.h"
+#include <rvdos.h>
+#include <stdio.h>
+#include <string.h>
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        print_str("Usage: cat <file>");
+        printf("Usage: cat <file>\n");
         return -1;
     }
 
     handle_t h = file_open(argv[1], O_RDONLY);
     if (h == INVALID_HANDLE) {
-        print_str("cat: cannot open ");
-        print_str(argv[1]);
-        print_str("");
+        printf("cat: cannot open %s\n", argv[1]);
         return -1;
     }
 

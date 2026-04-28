@@ -13,6 +13,12 @@ typedef unsigned short uint16;
 typedef unsigned int  uint32;
 typedef unsigned long uint64;
 
+typedef int32              handle_t;
+typedef int32              pid_t;
+
+#define NULL               ((void*)0)
+#define INVALID_HANDLE     ((handle_t)-1)
+
 #endif
 
 #endif

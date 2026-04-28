@@ -1,4 +1,5 @@
-#include "rvdos.h"
+#include <stdlib.h>
+#include <stdio.h>
 
 // 在配合 & 使用的时候，字符串输出会乱序
 

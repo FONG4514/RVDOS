@@ -3,6 +3,8 @@
 
 // System call numbers
 #define SYS_GET_ABI_INFO  1
+#define SYS_GETCAPS       2
+#define SYS_GET_VERSION   3
 
 #define SYS_TRAP          10
 #define SYS_GET_TICKS     11
@@ -25,5 +27,7 @@
 #define SYS_RENAME        28
 #define SYS_PS            29
 #define SYS_SBRK          30
+#define SYS_KILL          31
+#define SYS_SLEEP         32
 
 #endif

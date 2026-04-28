@@ -1,10 +1,10 @@
-#include "rvdos.h"
+#include <stdio.h>
 
 int main(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
-        print_str(argv[i]);
-        if (i < argc - 1) print_str(" ");
+        printf("%s", argv[i]);
+        if (i < argc - 1) printf(" ");
     }
-    print_str("");
+    printf("\n");
     return 0;
 }

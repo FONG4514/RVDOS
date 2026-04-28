@@ -1,0 +1,22 @@
+#include <string.h>
+#include <abi/types.h>
+
+int strcmp(const char *p, const char *q) {
+  while(*p && *p == *q)
+    p++, q++;
+  return (uint8)*p - (uint8)*q;
+}
+
+int strncmp(const char *p, const char *q, uint32 n) {
+  while(n > 0 && *p && *p == *q)
+    n--, p++, q++;
+  if(n == 0)
+    return 0;
+  return (uint8)*p - (uint8)*q;
+}
+
+uint32 strlen(const char *s) {
+    uint32 n = 0;
+    while (s[n]) n++;
+    return n;
+}

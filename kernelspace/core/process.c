@@ -71,7 +71,8 @@ found:
   p->effective_priority = 10;
   p->skipped_count = 0;
   p->cpu_usage = 0;
-
+  p->killed = 0;
+  p->owner_pid = 0;
 
 
   // Initialize handles
@@ -108,6 +109,7 @@ found:
   p->cwd_cluster = fs_get_root_cluster();
   p->cwd_path[0] = '/';
   p->cwd_path[1] = '\0';
+  p->caps = 0;
 
   return p;
 }
@@ -257,6 +259,10 @@ void sleep(void *chan, spinlock_t *lk) {
   // Reacquire original lock.
   release_lock(&p->lock);
   accquire_lock(lk);
+
+  if(p->killed) {
+    exit(-1);
+  }
 }
 
 void wakeup(void *chan) {
@@ -306,41 +312,101 @@ void exit(int status) {
 
 int wait(int pid) {
   PCB *p;
-  int found;
+  int is_nonblocking = (pid == WAIT_NONBLOCK_KEY);
+  PCB *current_proc = myproc();
+  int current_pid = current_proc->pid;
+
+  // 权限检查：只有 PID 1 (shell) 可以使用特殊的非阻塞暗号
+  if (is_nonblocking && current_pid != 1) {
+    return -1;
+  }
+
 
   accquire_lock(&proc_pool.lock);
-  for(;;){
-    found = 0;
-    for(p = procs; p < &procs[64]; p++){
-      if(p->pid == pid){
-        found = 1;
+  for (;;) {
+    int has_runnable_child = 0; // 记录系统中是否还有属于我的（或我该管的）活着的进程
+
+    for (p = procs; p < &procs[64]; p++) {
+      // skip unused and itself
+      if (p->state == UNUSED || p->pid == 0 || p->pid == current_pid) continue;
+
+      int is_my_child = (p->owner_pid == current_pid);
+      int is_orphan = 0;
+
+      if (is_nonblocking) {
+        if (!is_my_child) {
+          int owner_active = 0;
+          for (PCB *owner_check = procs; owner_check < &procs[64]; owner_check++) {
+            if (owner_check->state != UNUSED && owner_check->pid == p->owner_pid) {
+              owner_active = 1;
+              break;
+            }
+          }
+          if (!owner_active) is_orphan = 1;
+        }
+      }
+
+      if ((!is_nonblocking && p->pid == pid && is_my_child) || 
+          (is_nonblocking && (is_my_child || is_orphan))) {
+        
         accquire_lock(&p->lock);
-        if(p->state == ZOMBIE){
+        
+        if (p->state == ZOMBIE) {
+
+          // hit the zombie
           int status = p->exit_status;
+          int target_pid = p->pid;
+
+          if (p->pagetable) uvmfree(p->pagetable, p->sz);
+          if (p->kstack) kfree((void*)p->kstack);
+          
+          // 2. release handles
+          for (int i = 0; i < MAX_HANDLES; i++) {
+            if (p->handles[i]) {
+              // file_close(p->handles[i]);
+              p->handles[i] = 0;
+            }
+          }
+
           p->state = UNUSED;
           p->pid = 0;
-          // In a real OS, we would free the page table and trapframe here
-          // kfree(p->context);
-          // uvmfree(p->pagetable, p->sz);
+          p->owner_pid = 0;
+          p->killed = 0;
+          memset(p->name, 0, sizeof(p->name));
+
           release_lock(&p->lock);
           release_lock(&proc_pool.lock);
-          return status;
+          
+          // 非阻塞模式返回 PID，阻塞模式返回状态
+          return is_nonblocking ? target_pid : status;
         }
+
+        // 走到这里说明找到了符合关系的进程，但它还没死
+        has_runnable_child = 1;
         release_lock(&p->lock);
-        break;
+        
+        // 如果是普通模式找特定 PID，既然还没死，就没必要看别的槽位了
+        if (!is_nonblocking) break;
       }
     }
 
-    if(!found){
+    // --- 退出与阻塞逻辑 ---
+
+    if (is_nonblocking) {
+      release_lock(&proc_pool.lock);
+      return 0; // 扫了一圈没发现能收的，直接回
+    }
+
+    // 阻塞模式：如果没有相关孩子了，返回 -1 报错
+    if (!has_runnable_child) {
       release_lock(&proc_pool.lock);
       return -1;
     }
 
-    // Wait for a process to exit
+    // 阻塞模式：有孩子但还没死，睡等唤醒
     sleep(&proc_pool, &proc_pool.lock);
   }
 }
-
 #define O_WRONLY           1
 #define O_CREATE           0x100
 #define O_TRUNC            0x200
@@ -359,9 +425,19 @@ int spawn(char *path, char *args) {
     return -1;
 
   PCB *parent = myproc();
+  if (parent == 0) {
+        p->owner_pid = 1; // 或者设为 0，代表它是系统根进程
+    } else {
+        p->owner_pid = parent->pid;
+    }
   if (parent) {
       p->cwd_cluster = parent->cwd_cluster;
       memcpy(p->cwd_path, parent->cwd_path, 128);
+      p->caps = parent->caps;
+  } else {
+      // First process gets all capabilities from kernel info
+      extern const rvdos_abi_info_t KERNEL_ABI_INFO;
+      p->caps = KERNEL_ABI_INFO.caps;
   }
 
   pagetable = p->pagetable;
@@ -541,6 +617,48 @@ void forkret(void) {
   }
 
   user_trap_return();
+}
+
+// Kill the process with the given pid.
+// The victim won't exit until it tries to return
+// from a system call or trap to usermode.
+int kill(int pid) {
+  PCB *p;
+
+  // 获取全局锁，保护进程池的遍历
+  accquire_lock(&proc_pool.lock); 
+
+  for(p = procs; p < &procs[64]; p++){
+    // 注意：这里我们只在必要时拿 p->lock
+    if(p->pid == pid){
+      accquire_lock(&p->lock);
+      
+      if(p->state == ZOMBIE || p->state == UNUSED){
+        release_lock(&p->lock);
+        release_lock(&proc_pool.lock); // 记得释放全局锁
+        return -1;
+      }
+
+      p->killed = 1;
+      if(p->state == SLEEPING){
+        p->state = RUNNABLE;
+      }
+
+      release_lock(&p->lock);
+      
+      // --- 关键修复 ---
+      // 在调用 wakeup 之前释放全局锁！
+      // 因为 wakeup 会遍历所有进程并尝试获取每个 p->lock
+      // 保持“先全局后局部”且不长期霸占全局锁是内核安全的准则
+      release_lock(&proc_pool.lock);
+      
+      wakeup(&proc_pool); 
+      return 0;
+    }
+  }
+  
+  release_lock(&proc_pool.lock);
+  return -1;
 }
 
 int growproc(int n) {

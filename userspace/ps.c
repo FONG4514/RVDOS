@@ -1,4 +1,5 @@
 #include "rvdos.h"
+#include <stdio.h>
 
 void main() {
     proc_info_t info[64];

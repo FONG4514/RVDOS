@@ -31,6 +31,8 @@ interrupt_handler_t interrupt_table[16] = {
 void handle_timer() {
     accquire_lock(&tick_lock);
     ticks++;
+
+    wakeup(&ticks);
     // if (ticks % 100 == 0) printf("Hart %d: tick %d\n", (int)r_tp(), (int)ticks);
     release_lock(&tick_lock);
 
@@ -370,23 +372,107 @@ uint64 sys_trap(void) {
     return 0;
 }
 
+uint64 sys_getcaps(void) {
+    PCB *p = myproc();
+    return p->caps;
+}
+
 uint64 sys_get_abi_info(void) {
     PCB *proc = myproc();
     rvdos_abi_info_t *info = (rvdos_abi_info_t *)proc->context->a1;
 
+    if (info == 0) return -1;
+
     uint64 old_sstatus = r_sstatus();
     w_sstatus(old_sstatus | SSTATUS_SUM);
 
-    memcpy(info,&KERNEL_ABI_INFO,sizeof(rvdos_abi_info_t));
+    memcpy(info, &KERNEL_ABI_INFO, sizeof(rvdos_abi_info_t));
 
     w_sstatus(old_sstatus);
     return 0;
 }
 
+uint64 sys_get_version(void) {
+    PCB *proc = myproc();
+    char *buf = (char *)proc->context->a0;
+    uint32 len = (uint32)proc->context->a1;
+
+    if (buf == 0) return -1;
+
+    uint32 ver_len = strlen(KERNEL_VERSION);
+    if (len < ver_len + 1) return -1;
+
+    uint64 old_sstatus = r_sstatus();
+    w_sstatus(old_sstatus | SSTATUS_SUM);
+
+    memcpy(buf, KERNEL_VERSION, ver_len + 1);
+
+    w_sstatus(old_sstatus);
+    return 0;
+}
+
+uint64 sys_kill(void) {
+    PCB *p = myproc();
+    int pid = (int)p->context->a0;
+    return kill(pid);
+}
+
+uint64 sys_sleep(void) {
+    PCB *p = myproc();
+    uint64 sleep_time = p->context->a0;
+
+    uint64 ticks0;
+    
+    accquire_lock(&tick_lock);
+    ticks0 = ticks; 
+
+    while(ticks - ticks0 < sleep_time) {
+        if(myproc()->killed) {
+            release_lock(&tick_lock);
+            return -1;
+        }
+        
+        sleep(&ticks, &tick_lock);
+    }
+
+    release_lock(&tick_lock);
+    return 0;
+}
+
+// Internal function to check if a process has a certain capability
+int has_capability(PCB *p, uint32 cap) {
+    return (p->caps & cap) == cap;
+}
+
+uint32 syscall_caps[64] = {
+    [SYS_GET_TICKS]    = CAP_SYS_TIME,
+    [SYS_SPAWN]        = CAP_PROC_BASIC,
+    [SYS_CREATE_FILE]  = CAP_FS_BASIC,
+    [SYS_READ_FILE]    = CAP_FS_BASIC,
+    [SYS_WRITE_FILE]   = CAP_FS_BASIC,
+    [SYS_CLOSE_HANDLE] = CAP_FS_BASIC,
+    [SYS_WAIT]         = CAP_PROC_BASIC,
+    [SYS_LS]           = CAP_FS_DIR,
+    [SYS_PANIC]        = CAP_SYS_POWER,
+    [SYS_POWEROFF]     = CAP_SYS_POWER,
+    [SYS_REBOOT]       = CAP_SYS_POWER,
+    [SYS_MKDIR]        = CAP_FS_DIR,
+    [SYS_CHDIR]        = CAP_FS_CWD,
+    [SYS_UNLINK]       = CAP_FS_BASIC,
+    [SYS_GETCWD]       = CAP_FS_CWD,
+    [SYS_RENAME]       = CAP_FS_RENAME,
+    [SYS_PS]           = CAP_PROC_PS,
+    [SYS_SBRK]         = CAP_MEM_SBRK,
+    [SYS_KILL]         = CAP_PROC_KILL,
+    [SYS_SLEEP]        = CAP_PROC_SLEEP
+};
+
 // System call table
 // You can expand this by adding entries like [SYS_READ] = sys_read,
 syscall_t syscall_table[64] = {
     [SYS_GET_ABI_INFO] = sys_get_abi_info,
+    [SYS_GETCAPS]      = sys_getcaps,
+    [SYS_GET_VERSION]  = sys_get_version,
     [SYS_TRAP]         = sys_trap,
     [SYS_GET_TICKS]    = sys_get_ticks,
     [SYS_SPAWN]        = sys_spawn,
@@ -407,13 +493,19 @@ syscall_t syscall_table[64] = {
     [SYS_GETCWD]       = sys_getcwd,
     [SYS_RENAME]       = sys_rename,
     [SYS_PS]           = sys_ps,
-    [SYS_SBRK]         = sys_sbrk
+    [SYS_SBRK]         = sys_sbrk,
+    [SYS_KILL]         = sys_kill,
+    [SYS_SLEEP]        = sys_sleep
 };
 
 void syscall_dispatcher(void) {
     PCB *p = myproc();
     uint64 num = p->context->a7; // Use a7 as syscall number
     if (num > 0 && num < 64 && syscall_table[num]) {
+        if (!has_capability(p, syscall_caps[num])) {
+            p->context->a0 = WITHOUT_CAP;
+            return;
+        }
         p->context->a0 = syscall_table[num]();
     } else {
         printf("Unknown syscall %d on Hart %d at EPC %p\n", (int)num, (int)r_tp(), p->context->epc);
@@ -502,6 +594,10 @@ void user_trap_handler() {
 // Return from kernel to user mode
 void user_trap_return() {
     PCB *p = myproc();
+
+    if(p->killed) {
+        exit(-1);
+    }
 
     intr_off();
 

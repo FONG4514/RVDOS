@@ -123,6 +123,75 @@ pagetable_t uvmcreate(user_context_t *context) {
   return pt;
 }
 
+// Optionally free the physical memory.
+void
+uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
+{
+  uint64 a;
+  pte_t *pte;
+
+  if((va % PGSIZE) != 0)
+    panic("uvmunmap: not aligned");
+
+  for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+    if((pte = walk(pagetable, a, 0)) == 0)
+      panic("uvmunmap: walk");
+    if((*pte & PTE_V) == 0)
+      panic("uvmunmap: not mapped");
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("uvmunmap: not a leaf");
+    if(do_free){
+      uint64 pa = PTE2PA(*pte);
+      kfree((void*)pa);
+    }
+    *pte = 0;
+  }
+}
+
+
+void
+freewalk(pagetable_t pagetable)
+{
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      freewalk((pagetable_t)child);
+      pagetable[i] = 0;
+    } else if(pte & PTE_V){
+      panic("freewalk: leaf");
+    }
+  }
+  kfree((void*)pagetable);
+}
+
+// Free user memory pages,
+// then free page-table pages.
+void uvmfree(pagetable_t pagetable, uint64 sz) {
+  // 1. 释放用户程序占用的物理内存
+  if(sz > 0)
+    uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
+
+  // 2. 解除内核镜像和全内存映射 (注意：do_free 必须为 0！否则你会把内核自己给删了)
+  uvmunmap(pagetable, 0x80000000, (PHYSTOP - 0x80000000)/PGSIZE, 0);
+
+  // 3. 解除 MMIO 映射 (do_free = 0)
+  uvmunmap(pagetable, 0x10000000, 1, 0); // UART
+  uvmunmap(pagetable, 0x10001000, 1, 0); // VirtIO
+  uvmunmap(pagetable, CLINT, 0x10000/PGSIZE, 0);
+  uvmunmap(pagetable, PLIC, 0x400000/PGSIZE, 0);
+  uvmunmap(pagetable, SYSCON, 1, 0);
+
+  // 4. 解除高地址映射 (do_free = 0)
+  uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+  uvmunmap(pagetable, TRAPFRAME, 1, 0);
+
+  // 5. 现在可以安全拆除页表结构了
+  freewalk(pagetable);
+}
+
 
 // Enable paging
 void kvminithart() {

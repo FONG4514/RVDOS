@@ -1,4 +1,6 @@
 #include "rvdos.h"
+#include <stdio.h>
+#include <string.h>
 
 // Simple case-insensitive comparison helper
 int strcasecmp(const char *s1, const char *s2) {
@@ -38,6 +40,10 @@ void main() {
     printf("Type 'help' for a list of commands.\n");
 
     while (1) {
+
+        while (wait_process(WAIT_NONBLOCK_KEY) > 0) {
+        }
+
         if (get_cwd(cwd_buf, sizeof(cwd_buf)) == 0) {
             printf("[%s] # ", cwd_buf);
         } else {

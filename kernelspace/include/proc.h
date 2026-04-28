@@ -20,14 +20,17 @@ typedef struct PCB {
     user_context_t *context;  // Trapframe
     struct context sched_ctx; // Swtch context
     int pid;
+    int owner_pid;  
     int priority;             // Base priority
     int effective_priority;   // Current priority
     int skipped_count;        // Scheduler skip count for aging
     int cpu_usage;
     int exit_status;
+    int killed;               // one means killed and zero means not killed
     char name[16];
     uint32 cwd_cluster;
     char cwd_path[128];
+    uint32 caps;
     file_t *handles[MAX_HANDLES];
 } PCB;
 

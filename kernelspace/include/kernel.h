@@ -45,6 +45,7 @@ PCB*            myproc(void);
 void            swtch(struct context*, struct context*);
 void            exit(int status);
 int             spawn(char *path, char *redir_path);
+int             kill(int pid);
 int             wait(int pid);
 void            forkret(void);
 void            sleep(void *chan, spinlock_t *lk);
@@ -60,6 +61,9 @@ pagetable_t     kvmcreate();
 pagetable_t     uvmcreate(user_context_t *context);
 pte_t *         walk(pagetable_t, uint64, int);
 void            uvmmap(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm);
+void            freewalk(pagetable_t pagetable);
+void            uvmfree(pagetable_t pagetable, uint64 sz);
+void            uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free);
 
 void            push_off(spinlock_t* lock);
 void            pop_off(spinlock_t* lock);

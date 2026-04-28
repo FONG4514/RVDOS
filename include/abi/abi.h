@@ -3,6 +3,7 @@
 #define RVDOS_ABI_ABI_H
 
 #include <abi/types.h>    // 必须包含类型定义，因为结构体里用到了 uint64 等
+#include <abi/capability.h>
 
 typedef struct proc_info {
     int pid;
@@ -22,5 +23,14 @@ typedef struct proc_info {
 #define PROC_STATE_RUNNABLE 2
 #define PROC_STATE_RUNNING  3
 #define PROC_STATE_ZOMBIE   4
+
+#define O_RDONLY           0
+#define O_WRONLY           1
+#define O_RDWR             2
+#define O_CREATE           0x100
+#define O_TRUNC            0x200
+
+#define WAIT_NONBLOCK_KEY  -0x1145
+#define WITHOUT_CAP        -0x114514
 
 #endif
