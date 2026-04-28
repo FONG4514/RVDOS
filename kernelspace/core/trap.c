@@ -541,7 +541,7 @@ void syscall_dispatcher(void) {
     uint64 num = p->context->a7; // Use a7 as syscall number
     if (num > 0 && num < 64 && syscall_table[num]) {
         if (!has_capability(p, syscall_caps[num])) {
-            printf("without cap: %d",syscall_caps[num]);
+            printf("without capability: %s\n",syscall_names[num]);
             p->context->a0 = WITHOUT_CAP;
             return;
         }
