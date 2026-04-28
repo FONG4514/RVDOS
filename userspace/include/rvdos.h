@@ -38,5 +38,6 @@ void     sys_panic(void);
 void     poweroff(void);
 void     reboot(void);
 void     sys_trap(void);
+int32    trace(int enable);
 
 #endif

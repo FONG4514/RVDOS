@@ -29,5 +29,6 @@
 #define SYS_SBRK          30
 #define SYS_KILL          31
 #define SYS_SLEEP         32
+#define SYS_TRACE         33
 
 #endif

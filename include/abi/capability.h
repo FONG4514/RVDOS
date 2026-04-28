@@ -19,6 +19,7 @@
 #define CAP_PROC_PS         (1 << 9)
 #define CAP_PROC_KILL       (1 << 10)
 #define CAP_PROC_SLEEP      (1 << 11)
+#define CAP_PROC_TRACE      (1 << 12)
 
 // Memory
 #define CAP_MEM_SBRK        (1 << 16) // sbrk()

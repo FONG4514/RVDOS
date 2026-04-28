@@ -20,3 +20,13 @@ uint32 strlen(const char *s) {
     while (s[n]) n++;
     return n;
 }
+
+void* memset(void *s, int c, uint32 n) {
+  uint8 *p = (uint8*)s;
+  while(n > 0) {
+    *p = (uint8)c;
+    p++;
+    n--;
+  }
+  return s;
+}

@@ -119,3 +119,7 @@ uint32 get_caps(void) {
 void* sbrk(int n) {
     return (void*)syscall(SYS_SBRK, (uint64)n, 0, 0);
 }
+
+int32 trace(int enable) {
+    return (int32)syscall(SYS_TRACE, (uint64)enable, 0, 0);
+}

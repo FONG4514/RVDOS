@@ -439,6 +439,12 @@ uint64 sys_sleep(void) {
     return 0;
 }
 
+uint64 sys_trace(void) {
+    PCB *p = myproc();
+    p->tracing = (int)p->context->a0;
+    return 0;
+}
+
 // Internal function to check if a process has a certain capability
 int has_capability(PCB *p, uint32 cap) {
     return (p->caps & cap) == cap;
@@ -464,7 +470,38 @@ uint32 syscall_caps[64] = {
     [SYS_PS]           = CAP_PROC_PS,
     [SYS_SBRK]         = CAP_MEM_SBRK,
     [SYS_KILL]         = CAP_PROC_KILL,
-    [SYS_SLEEP]        = CAP_PROC_SLEEP
+    [SYS_SLEEP]        = CAP_PROC_SLEEP,
+    [SYS_TRACE]        = CAP_PROC_TRACE
+};
+
+const char *syscall_names[64] = {
+    [SYS_GET_ABI_INFO] = "get_abi_info",
+    [SYS_GETCAPS]      = "getcaps",
+    [SYS_GET_VERSION]  = "get_version",
+    [SYS_TRAP]         = "trap",
+    [SYS_GET_TICKS]    = "get_ticks",
+    [SYS_SPAWN]        = "spawn",
+    [SYS_EXIT]         = "exit",
+    [SYS_GETPID]       = "getpid",
+    [SYS_CREATE_FILE]  = "create_file",
+    [SYS_READ_FILE]    = "read_file",
+    [SYS_WRITE_FILE]   = "write_file",
+    [SYS_CLOSE_HANDLE] = "close_handle",
+    [SYS_WAIT]         = "wait",
+    [SYS_LS]           = "ls",
+    [SYS_PANIC]        = "panic",
+    [SYS_POWEROFF]     = "poweroff",
+    [SYS_REBOOT]       = "reboot",
+    [SYS_MKDIR]        = "mkdir",
+    [SYS_CHDIR]        = "chdir",
+    [SYS_UNLINK]       = "unlink",
+    [SYS_GETCWD]       = "getcwd",
+    [SYS_RENAME]       = "rename",
+    [SYS_PS]           = "ps",
+    [SYS_SBRK]         = "sbrk",
+    [SYS_KILL]         = "kill",
+    [SYS_SLEEP]        = "sleep",
+    [SYS_TRACE]        = "trace",
 };
 
 // System call table
@@ -495,7 +532,8 @@ syscall_t syscall_table[64] = {
     [SYS_PS]           = sys_ps,
     [SYS_SBRK]         = sys_sbrk,
     [SYS_KILL]         = sys_kill,
-    [SYS_SLEEP]        = sys_sleep
+    [SYS_SLEEP]        = sys_sleep,
+    [SYS_TRACE]        = sys_trace
 };
 
 void syscall_dispatcher(void) {
@@ -503,10 +541,18 @@ void syscall_dispatcher(void) {
     uint64 num = p->context->a7; // Use a7 as syscall number
     if (num > 0 && num < 64 && syscall_table[num]) {
         if (!has_capability(p, syscall_caps[num])) {
+            printf("without cap: %d",syscall_caps[num]);
             p->context->a0 = WITHOUT_CAP;
             return;
         }
+
+        uint64 arg0 = p->context->a0; // Save first argument for tracing
+
         p->context->a0 = syscall_table[num]();
+
+        if (p->tracing) {
+            printf("PID %d: syscall %s(0x%x) -> %d\n", p->pid, syscall_names[num], arg0, p->context->a0);
+        }
     } else {
         printf("Unknown syscall %d on Hart %d at EPC %p\n", (int)num, (int)r_tp(), p->context->epc);
         p->context->a0 = -1;

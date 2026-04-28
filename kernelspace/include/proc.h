@@ -31,6 +31,7 @@ typedef struct PCB {
     uint32 cwd_cluster;
     char cwd_path[128];
     uint32 caps;
+    int tracing;
     file_t *handles[MAX_HANDLES];
 } PCB;
 

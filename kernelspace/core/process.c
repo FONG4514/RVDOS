@@ -439,6 +439,7 @@ int spawn(char *path, char *args) {
       p->cwd_cluster = parent->cwd_cluster;
       memcpy(p->cwd_path, parent->cwd_path, 128);
       p->caps = parent->caps;
+      p->tracing = parent->tracing;
   } else {
       // First process gets all capabilities from kernel info
       extern const rvdos_abi_info_t KERNEL_ABI_INFO;

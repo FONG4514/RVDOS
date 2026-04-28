@@ -385,11 +385,19 @@ file_t* FS_CODE file_alloc() {
     return 0;
 }
 void FS_CODE file_free(file_t *f) {
+    if(f == 0 || (uint64)f < 0x80000000){ 
+        return; 
+    }
+
     accquire_lock(&file_pool_lock);
+    if(f->used == 0){
+        release_lock(&file_pool_lock);
+        return;
+    }
+    
     f->used = 0;
     release_lock(&file_pool_lock);
 }
-
 // Convert "filename.ext" to FAT32 8.3 format "FILENAMEEXT"
 static void FS_CODE to_fat_name(char *src, char *dst) {
     if (strcmp(src, ".") == 0) {

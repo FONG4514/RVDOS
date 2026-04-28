@@ -25,6 +25,9 @@ int main() {
     printf("[%s] FS_RENAME\n", (info.caps & CAP_FS_RENAME) ? "X" : " ");
     printf("[%s] PROC_BASIC\n", (info.caps & CAP_PROC_BASIC) ? "X" : " ");
     printf("[%s] PROC_PS\n", (info.caps & CAP_PROC_PS) ? "X" : " ");
+    printf("[%s] PROC_KILL\n", (info.caps & CAP_PROC_KILL) ? "X" : " ");
+    printf("[%s] PROC_SLEEP \n", (info.caps & CAP_PROC_SLEEP) ? "X" : " ");
+    printf("[%s] PROC_TRACE \n", (info.caps & CAP_PROC_TRACE) ? "X" : " ");
     printf("[%s] MEM_SBRK\n", (info.caps & CAP_MEM_SBRK) ? "X" : " ");
     printf("[%s] SYS_TIME\n", (info.caps & CAP_SYS_TIME) ? "X" : " ");
     printf("[%s] SYS_POWER\n", (info.caps & CAP_SYS_POWER) ? "X" : " ");
