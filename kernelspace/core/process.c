@@ -3,6 +3,8 @@
 struct cpu cpus[MAXCPUCORE];
 PCB procs[MAXPROCESSES];
 
+extern void file_free(file_t *f);
+
 struct {
   spinlock_t lock;
   int next_pid;
@@ -168,7 +170,7 @@ void scheduler(void) {
       p->cpu_usage++;
 
       if (p->cpu_usage >= 5) {
-          if (p->effective_priority > 1)
+          if (p->effective_priority > 1 || p->state == RUNNING)
               p->effective_priority--;
 
           p->cpu_usage = 0;
@@ -358,14 +360,17 @@ int wait(int pid) {
           int target_pid = p->pid;
 
           if (p->pagetable) uvmfree(p->pagetable, p->sz);
-          if (p->kstack) kfree((void*)p->kstack);
           
-          // 2. release handles
+          if (p->context) kfree((void*)p->context);
+          p->context = 0;
+          p->pagetable = 0;
+          
           for (int i = 0; i < MAX_HANDLES; i++) {
-            if (p->handles[i]) {
-              // file_close(p->handles[i]);
-              p->handles[i] = 0;
+            if (p->handles[i] && p->handles[i] != (file_t*)-1) {
+              // We can't call CloseHandle(i) because it uses myproc()
+              file_free(p->handles[i]);
             }
+            p->handles[i] = 0;
           }
 
           p->state = UNUSED;
@@ -588,6 +593,16 @@ int spawn(char *path, char *args) {
   return pid;
 
 bad:
+  if (p->pagetable) uvmfree(p->pagetable, p->sz);
+  if (p->context) kfree((void*)p->context);
+  p->context = 0;
+  p->pagetable = 0;
+  for (int i = 0; i < MAX_HANDLES; i++) {
+    if (p->handles[i] && p->handles[i] != (file_t*)-1) {
+      file_free(p->handles[i]);
+    }
+    p->handles[i] = 0;
+  }
   p->state = UNUSED;
   release_lock(&p->lock);
   return -1;

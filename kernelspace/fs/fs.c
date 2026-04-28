@@ -1206,9 +1206,15 @@ int FS_CODE disk_write(uint32 sector, uint8 *buf, uint32 count) {
 
   *REG_V(VIRTIO_MMIO_QUEUE_NOTIFY) = 0; 
 
-  uint64 timeout = 1000000;
-  while(disk.status[0] == 0xff && timeout > 0) { timeout--; }
+  uint64 timeout = 10000000; // Increased timeout
+  while(disk.status[0] == 0xff && timeout > 0) { 
+      timeout--; 
+      __sync_synchronize();
+  }
 
-  if(disk.status[0] != 0) return -1;
+  if(disk.status[0] != 0) {
+      // printf("disk_read error: status=0x%x\n", disk.status[0]);
+      return -1;
+  }
   return 0;
 }
