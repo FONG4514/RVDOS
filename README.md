@@ -34,8 +34,7 @@ make run
   - `lib/`: 内核依赖的工具
   - `entry.S`： 内核入口
 - `userspace/`: 用户态库与程序
-  - `shell.c`: 交互式 Shell 实现
-  - `rvdos.h`: 标准库的头文件
-  - `rvlibc.c`: 系统调用封装与标准库
+  - `include/`: 用户头文件
   - `....` : 用户程序
 - `fs.img`: FAT32 格式的磁盘镜像
+- `mkfs.sh` :  文件系统构建脚本
