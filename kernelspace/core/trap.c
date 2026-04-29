@@ -139,6 +139,15 @@ uint64 sys_spawn(void) {
     PCB *p = myproc();
     char *path = (char*)p->context->a0;
     char *redir = (char*)p->context->a1;
+    uint64 mask = p->context->a2;
+    uint64 child_cap = 0;
+
+    if (mask & (1ULL << 63)) {
+        child_cap = p->caps & (mask & ~(1ULL << 63));
+    } else {
+        child_cap = p->caps;
+    }
+
     if (path == 0) return -1;
 
     char kpath[64];
@@ -162,7 +171,7 @@ uint64 sys_spawn(void) {
     }
     
     w_sstatus(old_sstatus);
-    return spawn(kpath, redir ? kredir : 0);
+    return spawn(kpath, redir ? kredir : 0,child_cap);
 }
 
 uint64 sys_wait(void) {

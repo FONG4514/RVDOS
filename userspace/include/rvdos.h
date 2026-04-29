@@ -8,6 +8,7 @@
 
 pid_t    get_pid(void);
 pid_t    spawn_process(const char *path, const char *args);
+pid_t    sandbox(const char *path, const char *args,uint64 cap);
 int32    wait_process(pid_t pid);
 int32    kill_process(pid_t pid);
 void     exit_process(int32 status);

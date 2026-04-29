@@ -44,7 +44,7 @@ void            yield(void);
 PCB*            myproc(void);
 void            swtch(struct context*, struct context*);
 void            exit(int status);
-int             spawn(char *path, char *redir_path);
+int             spawn(char *path, char *redir_path, uint64 mask);
 int             kill(int pid);
 int             wait(int pid);
 void            forkret(void);

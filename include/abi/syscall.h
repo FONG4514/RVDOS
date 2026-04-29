@@ -30,5 +30,6 @@
 #define SYS_KILL          31
 #define SYS_SLEEP         32
 #define SYS_TRACE         33
+#define SYS_SANDBOX       34
 
 #endif

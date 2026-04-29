@@ -56,6 +56,10 @@ pid_t spawn_process(const char *path, const char *args) {
     return (pid_t)syscall(SYS_SPAWN, (uint64)path, (uint64)args, 0);
 }
 
+pid_t sandbox(const char *path, const char *args,uint64 cap) {
+    return (pid_t)syscall(SYS_SPAWN, (uint64)path, (uint64)args, cap);
+}
+
 int32 wait_process(pid_t pid) {
     return (int32)syscall(SYS_WAIT, (uint64)pid, 0, 0);
 }

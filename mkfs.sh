@@ -47,7 +47,7 @@ for LIB in "${LIBS[@]}"; do
 done
 
 # 定义所有要编译的程序
-PROGRAMS=("shell" "panic" "ls" "bench" "mkdir" "rm" "mv" "cat" "echo" "clear" "poweroff" "reboot" "ps" "loop" "sysinfo" "kill" "sleep" "trace")
+PROGRAMS=("shell" "panic" "ls" "bench" "mkdir" "rm" "mv" "cat" "echo" "clear" "poweroff" "reboot" "ps" "loop" "sysinfo" "kill" "sleep" "trace" "sandbox")
 
 for PROG in "${PROGRAMS[@]}"; do
     echo "编译 ${PROG}..."

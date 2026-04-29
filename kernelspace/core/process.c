@@ -3,6 +3,9 @@
 struct cpu cpus[MAXCPUCORE];
 PCB procs[MAXPROCESSES];
 
+extern const rvdos_abi_info_t KERNEL_ABI_INFO;
+
+
 extern void file_free(file_t *f);
 
 struct {
@@ -418,7 +421,7 @@ int wait(int pid) {
 
 // Create a new process, load code from file, and start it.
 // Returns pid of the new process, or -1 on error.
-int spawn(char *path, char *args) {
+int spawn(char *path, char *args, uint64 cap) {
   PCB *p;
   uint64 pid;
   struct elfhdr elf;
@@ -438,13 +441,9 @@ int spawn(char *path, char *args) {
   if (parent) {
       p->cwd_cluster = parent->cwd_cluster;
       memcpy(p->cwd_path, parent->cwd_path, 128);
-      p->caps = parent->caps;
       p->tracing = parent->tracing;
-  } else {
-      // First process gets all capabilities from kernel info
-      extern const rvdos_abi_info_t KERNEL_ABI_INFO;
-      p->caps = KERNEL_ABI_INFO.caps;
   }
+  p->caps = cap;
 
   pagetable = p->pagetable;
 
@@ -611,7 +610,7 @@ bad:
 
 // Set up first user process.
 void userinit(void) {
-  if (spawn("shell", 0) < 0) {
+  if (spawn("shell", 0,KERNEL_ABI_INFO.caps) < 0) {
     panic("userinit: failed to spawn shell");
   }
 }
