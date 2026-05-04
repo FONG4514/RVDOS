@@ -34,6 +34,8 @@ void main() {
     printf("Initializing physical memory...\n");
     kinit();
     
+    kmalloc_init();
+    
     printf("Initializing kernel page table...\n");
     kvminit();
     

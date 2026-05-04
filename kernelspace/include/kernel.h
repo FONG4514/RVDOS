@@ -34,6 +34,11 @@ void            kinit();
 void*           kalloc();
 void            kfree(void *);
 
+// kmalloc.c
+void            kmalloc_init();
+void*           kmalloc(uint32 size);
+void            kmfree(void *);
+
 // process.c
 void            procinit(void);
 PCB*            allocproc(void);
