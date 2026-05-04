@@ -270,8 +270,8 @@ struct fat32_fs {
 };
 
 static struct fat32_fs fs FS_DATA;
-static file_t file_pool[64] FS_DATA;
-static spinlock_t file_pool_lock;
+static struct fat32_fs fs FS_DATA;
+struct kmem_cache *file_cache;
 static spinlock_t fs_lock; // Global lock for hardware and cache access
 
 int disk_write(uint32 sector, uint8 *buf, uint32 count);
@@ -283,13 +283,10 @@ static void to_fat_name(char *src, char *dst);
 static uint32 get_path_cluster(char *path);
 
 void FS_CODE fs_init() {
-    init_lock(&file_pool_lock, "file_pool_lock");
     init_lock(&fs_lock, "fs_lock");
     
-    // 简化：只标记未使用
-    for(int i = 0; i < 64; i++) {
-        file_pool[i].used = 0;
-    }
+    file_cache = kmem_cache_create("File", sizeof(file_t));
+    if (!file_cache) panic("fs_init: kmem_cache_create failed");
 
     accquire_lock(&fs_lock);
     if (virtio_disk_init() < 0) panic("fs_init: disk init failed");
@@ -367,36 +364,19 @@ static uint32 FS_CODE alloc_cluster() {
     return 0;
 }
 
-// Windows style helpers
+// SLUB-based file object allocation
 file_t* FS_CODE file_alloc() {
-    accquire_lock(&file_pool_lock);
-    for(int i = 0; i < 64; i++) {
-        if(!file_pool[i].used) {
-            file_pool[i].used = 1;
-            file_pool[i].offset = 0;
-            file_pool[i].first_cluster = 0;
-            file_pool[i].file_size = 0; // 确保大小也清零
-            // 此时不再操作 file_pool[i].data
-            release_lock(&file_pool_lock);
-            return &file_pool[i];
-        }
+    file_t *f = (file_t*)kmem_cache_alloc(file_cache);
+    if (f) {
+        memset(f, 0, sizeof(file_t));
+        f->used = 1;
     }
-    release_lock(&file_pool_lock);
-    return 0;
+    return f;
 }
-void FS_CODE file_free(file_t *f) {
-    if(f == 0 || (uint64)f < 0x80000000){ 
-        return; 
-    }
 
-    accquire_lock(&file_pool_lock);
-    if(f->used == 0){
-        release_lock(&file_pool_lock);
-        return;
-    }
-    
-    f->used = 0;
-    release_lock(&file_pool_lock);
+void FS_CODE file_free(file_t *f) {
+    if (f == 0 || (uint64)f < 0x80000000) return;
+    kmem_cache_free(file_cache, f);
 }
 // Convert "filename.ext" to FAT32 8.3 format "FILENAMEEXT"
 static void FS_CODE to_fat_name(char *src, char *dst) {

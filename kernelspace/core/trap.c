@@ -13,6 +13,9 @@ extern void uart_putc_no_lock(char c);
 
 extern const rvdos_abi_info_t KERNEL_ABI_INFO;
 
+extern struct kmem_cache *pcb_cache;
+extern struct kmem_cache *file_cache;
+
 uint64 ticks = 0;
 spinlock_t tick_lock;
 
@@ -241,6 +244,8 @@ uint64 sys_panic (void) {
 
 uint64 sys_poweroff(void) {
     printf("Powering off...\n");
+    kmem_cache_destroy(pcb_cache);
+    kmem_cache_destroy(file_cache);
     // RISC-V Virt machine syscon poweroff
     *(uint32*)SYSCON = 0x5555;
     return 0;
@@ -248,6 +253,8 @@ uint64 sys_poweroff(void) {
 
 uint64 sys_reboot(void) {
     printf("Rebooting...\n");
+    kmem_cache_destroy(pcb_cache);
+    kmem_cache_destroy(file_cache);
     // RISC-V Virt machine syscon reboot
     *(uint32*)SYSCON = 0x7777;
     return 0;
@@ -317,15 +324,15 @@ uint64 sys_ps(void) {
     proc_info_t kinfo;
     uint32 count = 0;
 
-    extern PCB procs[64];
-    for(int i = 0; i < 64 && count < max; i++) {
-        accquire_lock(&procs[i].lock);
-        if (procs[i].state != UNUSED) {
-            kinfo.pid = procs[i].pid;
-            memcpy(kinfo.name, procs[i].name, 16);
-            kinfo.priority = procs[i].priority;
-            kinfo.effective_priority = procs[i].effective_priority;
-            kinfo.state = procs[i].state;
+    extern PCB* procs[MAXPROCESSES];
+    for(int i = 0; i < MAXPROCESSES && count < max; i++) {
+        accquire_lock(&procs[i]->lock);
+        if (procs[i]->state != UNUSED) {
+            kinfo.pid = procs[i]->pid;
+            memcpy(kinfo.name, procs[i]->name, 16);
+            kinfo.priority = procs[i]->priority;
+            kinfo.effective_priority = procs[i]->effective_priority;
+            kinfo.state = procs[i]->state;
             
             // Access user memory safely while keeping interrupt state intact
             uint64 s = r_sstatus();
@@ -335,7 +342,7 @@ uint64 sys_ps(void) {
             
             count++;
         }
-        release_lock(&procs[i].lock);
+        release_lock(&procs[i]->lock);
     }
     
     return count;

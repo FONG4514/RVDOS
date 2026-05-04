@@ -1,7 +1,8 @@
 #include <kernel.h>
 
 struct cpu cpus[MAXCPUCORE];
-PCB procs[MAXPROCESSES];
+PCB* procs[MAXPROCESSES];
+struct kmem_cache *pcb_cache;
 
 extern const rvdos_abi_info_t KERNEL_ABI_INFO;
 
@@ -17,11 +18,18 @@ void procinit(void) {
   init_lock(&proc_pool.lock, "proc_pool");
   proc_pool.next_pid = 1;
   
-  for(int i = 0; i < 64; i++) {
-    init_lock(&procs[i].lock, "proc");
-    procs[i].state = UNUSED;
+  pcb_cache = kmem_cache_create("PCB", sizeof(PCB));
+  if (!pcb_cache) panic("procinit: kmem_cache_create failed");
+
+  for(int i = 0; i < MAXPROCESSES; i++) {
+    procs[i] = (PCB*)kmem_cache_alloc(pcb_cache);
+    if (!procs[i]) panic("procinit: kmem_cache_alloc failed");
+    
+    init_lock(&procs[i]->lock, "proc");
+    procs[i]->state = UNUSED;
     // Allocate kernel stack for each potential process
-    procs[i].kstack = (uint64)kalloc();
+    procs[i]->kstack = (uint64)kalloc();
+    if (!procs[i]->kstack) panic("procinit: kstack kalloc failed");
   }
 }
 
@@ -54,7 +62,8 @@ int allocpid() {
 PCB* allocproc(void) {
   PCB *p;
 
-  for(p = procs; p < &procs[64]; p++) {
+  for(int i = 0; i < MAXPROCESSES; i++) {
+    p = procs[i];
     // Optimization: Check state without lock first to avoid panics on multi-core
     if(p->state == UNUSED) {
       accquire_lock(&p->lock);
@@ -78,6 +87,7 @@ found:
   p->cpu_usage = 0;
   p->killed = 0;
   p->owner_pid = 0;
+  p->tracing = 0;
 
 
   // Initialize handles
@@ -134,7 +144,8 @@ void scheduler(void) {
     intr_on();
 
     PCB *best = 0;
-    for(p = procs; p < &procs[64]; p++) {
+    for(int i = 0; i < MAXPROCESSES; i++) {
+      p = procs[i];
       accquire_lock(&p->lock);
       if(p->state == RUNNABLE) {
         if(best == 0 || p->effective_priority > best->effective_priority) {
@@ -183,7 +194,8 @@ void scheduler(void) {
       
       release_lock(&p->lock);
 
-      for (p = procs; p < &procs[64]; p++) {
+      for (int i = 0; i < MAXPROCESSES; i++) {
+          p = procs[i];
           if (p->state == RUNNABLE) {
               accquire_lock(&p->lock);
 
@@ -273,7 +285,8 @@ void sleep(void *chan, spinlock_t *lk) {
 void wakeup(void *chan) {
   PCB *p;
 
-  for(p = procs; p < &procs[64]; p++) {
+  for(int i = 0; i < MAXPROCESSES; i++) {
+    p = procs[i];
     if(p != myproc()){
       accquire_lock(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
@@ -331,7 +344,8 @@ int wait(int pid) {
   for (;;) {
     int has_runnable_child = 0; // 记录系统中是否还有属于我的（或我该管的）活着的进程
 
-    for (p = procs; p < &procs[64]; p++) {
+    for (int i = 0; i < MAXPROCESSES; i++) {
+      p = procs[i];
       // skip unused and itself
       if (p->state == UNUSED || p->pid == 0 || p->pid == current_pid) continue;
 
@@ -341,7 +355,8 @@ int wait(int pid) {
       if (is_nonblocking) {
         if (!is_my_child) {
           int owner_active = 0;
-          for (PCB *owner_check = procs; owner_check < &procs[64]; owner_check++) {
+          for (int j = 0; j < MAXPROCESSES; j++) {
+            PCB *owner_check = procs[j];
             if (owner_check->state != UNUSED && owner_check->pid == p->owner_pid) {
               owner_active = 1;
               break;
@@ -411,7 +426,7 @@ int wait(int pid) {
       return -1;
     }
 
-    // 阻塞模式：有孩子但还没死，睡等唤醒
+    // 阻塞模式：有孩子 but 还没死，睡等唤醒
     sleep(&proc_pool, &proc_pool.lock);
   }
 }
@@ -643,7 +658,8 @@ int kill(int pid) {
   // 获取全局锁，保护进程池的遍历
   accquire_lock(&proc_pool.lock); 
 
-  for(p = procs; p < &procs[64]; p++){
+  for(int i = 0; i < MAXPROCESSES; i++){
+    p = procs[i];
     // 注意：这里我们只在必要时拿 p->lock
     if(p->pid == pid){
       accquire_lock(&p->lock);
@@ -701,4 +717,3 @@ int growproc(int n) {
   release_lock(&p->lock);
   return 0;
 }
-

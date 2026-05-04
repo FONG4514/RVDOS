@@ -35,9 +35,35 @@ void*           kalloc();
 void            kfree(void *);
 
 // kmalloc.c
+
+struct header {
+  uint32 size;
+  uint32 magic;
+};
+
+struct block {
+  struct block *next;
+};
+
+struct slab_page {
+    void *addr;
+    struct slab_page *next;
+};
+
+struct kmem_cache {
+  spinlock_t lock;
+  struct block *freelist;
+  uint32 objsize;
+  struct slab_page *pages;
+};
+
 void            kmalloc_init();
 void*           kmalloc(uint32 size);
 void            kmfree(void *);
+struct kmem_cache* kmem_cache_create(char *name, uint32 size);
+void*           kmem_cache_alloc(struct kmem_cache *cache);
+void            kmem_cache_free(struct kmem_cache *cache, void *addr);
+void            kmem_cache_destroy(struct kmem_cache *cache);
 
 // process.c
 void            procinit(void);
