@@ -4,6 +4,6 @@
 #define MAXCPUCORE 8
 #define MAXPROCESSES 64
 
-#define KERNEL_VERSION "Alpha-0.7.5-Stable"
+#define KERNEL_VERSION "Alpha-0.7.6-Stable"
 
 #endif
