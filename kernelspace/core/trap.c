@@ -219,7 +219,7 @@ uint64 sys_write_file(void) {
     // VirtIO uses physical addresses (identity mapping) and cannot see user VA.
     if (len > PGSIZE) len = PGSIZE; // Limit single write to one page for simplicity
     
-    uint8 *kbuf = kalloc();
+    uint8 *kbuf = kmalloc(len);
     if (!kbuf) return -1;
 
     uint64 old_sstatus = r_sstatus();
@@ -230,7 +230,7 @@ uint64 sys_write_file(void) {
     extern int WriteFile(int, uint8*, uint32);
     uint64 ret = WriteFile(handle, kbuf, len);
     
-    kfree(kbuf);
+    kmfree(kbuf);
     return ret;
 }
 

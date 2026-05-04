@@ -54,10 +54,13 @@ void main() {
     printf("Initializing file system...\n");
     fs_init();
 
-    uint8 *icon_buf = (uint8*)kalloc();
-    read_icon(icon_buf);
+    uint8 *icon_buf = (uint8*)kmalloc(4096);
+    if (icon_buf) {
+        read_icon(icon_buf);
+        kmfree(icon_buf);
+    }
 
-     userinit();
+    userinit();
 
     __sync_synchronize();
     started = 1;
