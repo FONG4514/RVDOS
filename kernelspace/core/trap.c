@@ -329,11 +329,20 @@ uint64 sys_ps(void) {
         accquire_lock(&procs[i]->lock);
         if (procs[i]->state != UNUSED) {
             kinfo.pid = procs[i]->pid;
+            kinfo.owner_pid = procs[i]->owner_pid;
             memcpy(kinfo.name, procs[i]->name, 16);
             kinfo.priority = procs[i]->priority;
             kinfo.effective_priority = procs[i]->effective_priority;
             kinfo.state = procs[i]->state;
             
+            int handle_count = 0;
+            for(int j = 0; j < MAX_HANDLES; j++) {
+                if (procs[i]->handles[j] != 0) {
+                    handle_count++;
+                }
+            }
+            kinfo.handle_count = handle_count;
+
             // Access user memory safely while keeping interrupt state intact
             uint64 s = r_sstatus();
             w_sstatus(s | SSTATUS_SUM);
@@ -462,17 +471,16 @@ uint64 sys_trace(void) {
 }
 
 // Internal function to check if a process has a certain capability
-int has_capability(PCB *p, uint32 cap) {
+int has_capability(PCB *p, uint64 cap) {
     return (p->caps & cap) == cap;
 }
 
-uint32 syscall_caps[64] = {
+uint64 syscall_caps[64] = {
     [SYS_GET_TICKS]    = CAP_SYS_TIME,
     [SYS_SPAWN]        = CAP_PROC_BASIC,
-    [SYS_CREATE_FILE]  = CAP_FS_BASIC,
-    [SYS_READ_FILE]    = CAP_FS_BASIC,
-    [SYS_WRITE_FILE]   = CAP_FS_BASIC,
-    [SYS_CLOSE_HANDLE] = CAP_FS_BASIC,
+    [SYS_CREATE_FILE]  = CAP_FS_WRITE,
+    [SYS_READ_FILE]    = CAP_FS_READ,
+    [SYS_WRITE_FILE]   = CAP_FS_WRITE,
     [SYS_WAIT]         = CAP_PROC_BASIC,
     [SYS_LS]           = CAP_FS_DIR,
     [SYS_PANIC]        = CAP_SYS_POWER,
@@ -480,7 +488,7 @@ uint32 syscall_caps[64] = {
     [SYS_REBOOT]       = CAP_SYS_POWER,
     [SYS_MKDIR]        = CAP_FS_DIR,
     [SYS_CHDIR]        = CAP_FS_CWD,
-    [SYS_UNLINK]       = CAP_FS_BASIC,
+    [SYS_UNLINK]       = CAP_FS_WRITE,
     [SYS_GETCWD]       = CAP_FS_CWD,
     [SYS_RENAME]       = CAP_FS_RENAME,
     [SYS_PS]           = CAP_PROC_PS,
@@ -556,8 +564,18 @@ void syscall_dispatcher(void) {
     PCB *p = myproc();
     uint64 num = p->context->a7; // Use a7 as syscall number
     if (num > 0 && num < 64 && syscall_table[num]) {
-        if (!has_capability(p, syscall_caps[num])) {
-            printf("without capability: %s\n",syscall_names[num]);
+        uint64 cap_needed = syscall_caps[num];
+        
+        // Special case: writing to STDOUT/STDERR does not require CAP_FS_WRITE
+        if (num == SYS_WRITE_FILE) {
+            int handle = (int)p->context->a0;
+            if (handle == STDOUT || handle == STDERR) {
+                cap_needed = 0;
+            }
+        }
+
+        if (cap_needed != 0 && !has_capability(p, cap_needed)) {
+            printf("PID %d: without capability %s (has 0x%lx, needs 0x%lx)\n", p->pid, syscall_names[num], p->caps, cap_needed);
             p->context->a0 = WITHOUT_CAP;
             return;
         }

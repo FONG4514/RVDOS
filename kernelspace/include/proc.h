@@ -19,7 +19,7 @@ typedef struct PCB {
     uint64 kstack;
     user_context_t *context;  // Trapframe
     struct context sched_ctx; // Swtch context
-    int pid;
+    uint32 pid;
     int owner_pid;  
     int priority;             // Base priority
     int effective_priority;   // Current priority
@@ -30,7 +30,7 @@ typedef struct PCB {
     char name[16];
     uint32 cwd_cluster;
     char cwd_path[128];
-    uint32 caps;
+    uint64 caps;
     int tracing;
     file_t *handles[MAX_HANDLES];
 } PCB;
@@ -55,6 +55,7 @@ enum procstate { UNUSED = PROC_STATE_UNUSED,
 #define BASE_EFF_PRIO 10
 #define SKIP_THRESHOLD 5
 #define MAX_EFF_PRIO 30
+#define MAXPID 65535
 
 
 #endif

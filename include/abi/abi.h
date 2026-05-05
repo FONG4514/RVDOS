@@ -7,10 +7,12 @@
 
 typedef struct proc_info {
     int pid;
+    int owner_pid;
     char name[16];
     int priority;
     int effective_priority;
     int state;
+    int handle_count;
 } proc_info_t;
 
 #define MAX_HANDLES 64

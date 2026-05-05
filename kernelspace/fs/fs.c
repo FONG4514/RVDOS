@@ -133,7 +133,6 @@ int FS_CODE virtio_disk_init() {
   status |= VIRTIO_STATUS_DRIVER_OK;
   *REG_V(VIRTIO_MMIO_STATUS) = status;
   
-  printf("virtio_disk_init: Legacy Mode");
   return 0;
 }
 
@@ -193,13 +192,6 @@ int FS_CODE disk_read(uint32 sector, uint8 *buf, uint32 count) {
   if(disk.status[0] != 0) {
       printf("[VirtIO Error] Disk returned error status: %d\n", disk.status[0]);
       return -1;
-  }
-
-  // 7. 成功后打印 FAT32 关键特征进行验证
-  if(sector == 0) {
-      printf("Sector 0 Read. Magic: 0x%x%x (Expected 0x55aa) ", 
-              buf[510], buf[511]);
-      printf("OEM ID: %.8s\n", &buf[3]);
   }
 
   return 0;
@@ -304,7 +296,6 @@ void FS_CODE fs_init() {
     fs.root_cluster = bpb->root_cluster;
     fs.first_data_sector = bpb->reserved_sectors + (bpb->fat_count * bpb->fat_size_32);
 
-    printf("RVDOS: FAT32 Initialized. Root @ %d\n", fs.root_cluster);
     release_lock(&fs_lock);
 }
 

@@ -8,10 +8,11 @@ extern const rvdos_abi_info_t KERNEL_ABI_INFO;
 
 
 extern void file_close(file_t *f);
+uint8 pid_alive[MAXPID];
 
 struct {
   spinlock_t lock;
-  int next_pid;
+  uint32 next_pid;
 } proc_pool;
 
 void procinit(void) {
@@ -51,7 +52,11 @@ PCB* myproc(void) {
 int allocpid() {
   int pid;
   accquire_lock(&proc_pool.lock);
-  pid = proc_pool.next_pid++;
+  if (proc_pool.next_pid + 1 <= MAXPID + 1) {
+    pid = proc_pool.next_pid++;
+  } else {
+    panic("allocpid: MAXPID");
+  }
   release_lock(&proc_pool.lock);
   return pid;
 }
@@ -126,6 +131,7 @@ found:
   p->cwd_path[1] = '\0';
   p->caps = 0;
 
+  pid_alive[p->pid] = 1;
   return p;
 }
 
@@ -354,14 +360,7 @@ int wait(int pid) {
 
       if (is_nonblocking) {
         if (!is_my_child) {
-          int owner_active = 0;
-          for (int j = 0; j < MAXPROCESSES; j++) {
-            PCB *owner_check = procs[j];
-            if (owner_check->state != UNUSED && owner_check->pid == p->owner_pid) {
-              owner_active = 1;
-              break;
-            }
-          }
+          int owner_active = pid_alive[p->owner_pid];
           if (!owner_active) is_orphan = 1;
         }
       }
@@ -395,6 +394,8 @@ int wait(int pid) {
           p->owner_pid = 0;
           p->killed = 0;
           memset(p->name, 0, sizeof(p->name));
+
+          pid_alive[p->pid] = 0;
 
           release_lock(&p->lock);
           release_lock(&proc_pool.lock);

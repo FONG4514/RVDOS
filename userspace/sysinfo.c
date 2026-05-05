@@ -19,7 +19,8 @@ int main() {
     printf("ABI Version: %d\n", info.abi_version);
     printf("Supported Capabilities:\n");
 
-    printf("[%s] FS_BASIC\n", (info.caps & CAP_FS_BASIC) ? "X" : " ");
+    printf("[%s] FS_READ\n", (info.caps & CAP_FS_READ) ? "X" : " ");
+    printf("[%s] FS_WRITE\n", (info.caps & CAP_FS_WRITE) ? "X" : " ");
     printf("[%s] FS_DIR\n", (info.caps & CAP_FS_DIR) ? "X" : " ");
     printf("[%s] FS_CWD\n", (info.caps & CAP_FS_CWD) ? "X" : " ");
     printf("[%s] FS_RENAME\n", (info.caps & CAP_FS_RENAME) ? "X" : " ");
@@ -28,6 +29,7 @@ int main() {
     printf("[%s] PROC_KILL\n", (info.caps & CAP_PROC_KILL) ? "X" : " ");
     printf("[%s] PROC_SLEEP \n", (info.caps & CAP_PROC_SLEEP) ? "X" : " ");
     printf("[%s] PROC_TRACE \n", (info.caps & CAP_PROC_TRACE) ? "X" : " ");
+    printf("[%s] PROC_SANDBOX \n", (info.caps & CAP_PROC_SANDBOX) ? "X" : " ");
     printf("[%s] MEM_SBRK\n", (info.caps & CAP_MEM_SBRK) ? "X" : " ");
     printf("[%s] SYS_TIME\n", (info.caps & CAP_SYS_TIME) ? "X" : " ");
     printf("[%s] SYS_POWER\n", (info.caps & CAP_SYS_POWER) ? "X" : " ");

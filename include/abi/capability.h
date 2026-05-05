@@ -4,15 +4,16 @@
 #include "types.h"
 
 // --- ABI version ---
-#define RVDOS_ABI_V1   1
+#define RVDOS_ABI_VER   2
 
 // --- Capability bitmask (32-bit for now) ---
 
 // FS / Path
-#define CAP_FS_BASIC        (1ULL << 0)  // open/read/write/close
-#define CAP_FS_DIR          (1ULL << 1)  // directory support (mkdir, ls)
-#define CAP_FS_CWD          (1ULL << 2)  // current working directory
-#define CAP_FS_RENAME       (1ULL << 3)
+#define CAP_FS_READ         (1ULL << 0)  // open/read/close
+#define CAP_FS_WRITE        (1ULL << 1)  // write
+#define CAP_FS_DIR          (1ULL << 2)  // directory support (mkdir, ls)
+#define CAP_FS_CWD          (1ULL << 3)  // current working directory
+#define CAP_FS_RENAME       (1ULL << 4)
 
 // Process
 #define CAP_PROC_BASIC      (1ULL << 8)  // spawn/exit/wait
