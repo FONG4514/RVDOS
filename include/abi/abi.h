@@ -13,7 +13,7 @@ typedef struct proc_info {
     int state;
 } proc_info_t;
 
-#define MAX_HANDLES 16
+#define MAX_HANDLES 64
 #define STDIN  0
 #define STDOUT 1
 #define STDERR 2

@@ -7,7 +7,7 @@ struct kmem_cache *pcb_cache;
 extern const rvdos_abi_info_t KERNEL_ABI_INFO;
 
 
-extern void file_free(file_t *f);
+extern void file_close(file_t *f);
 
 struct {
   spinlock_t lock;
@@ -385,8 +385,7 @@ int wait(int pid) {
           
           for (int i = 0; i < MAX_HANDLES; i++) {
             if (p->handles[i] && p->handles[i] != (file_t*)-1) {
-              // We can't call CloseHandle(i) because it uses myproc()
-              file_free(p->handles[i]);
+              file_close(p->handles[i]);
             }
             p->handles[i] = 0;
           }
@@ -614,7 +613,7 @@ bad:
   p->pagetable = 0;
   for (int i = 0; i < MAX_HANDLES; i++) {
     if (p->handles[i] && p->handles[i] != (file_t*)-1) {
-      file_free(p->handles[i]);
+      file_close(p->handles[i]);
     }
     p->handles[i] = 0;
   }

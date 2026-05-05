@@ -369,13 +369,31 @@ file_t* FS_CODE file_alloc() {
     file_t *f = (file_t*)kmem_cache_alloc(file_cache);
     if (f) {
         memset(f, 0, sizeof(file_t));
-        f->used = 1;
+        f->ref = 1;
+        init_lock(&f->lock, "file_lock");
     }
     return f;
 }
 
-void FS_CODE file_free(file_t *f) {
+file_t* FS_CODE file_dup(file_t *f) {
+    if (f == 0 || (uint64)f < 0x80000000) return f;
+    accquire_lock(&f->lock);
+    f->ref++;
+    release_lock(&f->lock);
+    return f;
+}
+
+void FS_CODE file_close(file_t *f) {
     if (f == 0 || (uint64)f < 0x80000000) return;
+    
+    accquire_lock(&f->lock);
+    if (f->ref < 1) panic("file_close: ref < 1");
+    if (--f->ref > 0) {
+        release_lock(&f->lock);
+        return;
+    }
+    // ref is now 0
+    release_lock(&f->lock);
     kmem_cache_free(file_cache, f);
 }
 // Convert "filename.ext" to FAT32 8.3 format "FILENAMEEXT"
@@ -560,7 +578,7 @@ int FS_CODE CreateHandler(char *path, int mode) {
                 return h; 
             }
         }
-        file_free(f);
+        file_close(f);
         release_lock(&fs_lock);
         return -1;
     }
@@ -596,7 +614,7 @@ int FS_CODE CreateHandler(char *path, int mode) {
                             return h;
                         }
                     }
-                    file_free(f);
+                    file_close(f);
                 }
             }
         }
@@ -766,7 +784,7 @@ void FS_CODE CloseHandle(int handle) {
     if(handle < 0 || handle >= MAX_HANDLES || p->handles[handle] == 0) return;
     if (p->handles[handle] == (file_t *)-1) { p->handles[handle] = 0; return; }
     file_t *f = p->handles[handle];
-    file_free(f);
+    file_close(f);
     p->handles[handle] = 0;
 }
 
