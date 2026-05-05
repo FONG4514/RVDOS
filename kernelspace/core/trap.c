@@ -575,7 +575,7 @@ void syscall_dispatcher(void) {
         }
 
         if (cap_needed != 0 && !has_capability(p, cap_needed)) {
-            printf("PID %d: without capability %s (has 0x%lx, needs 0x%lx)\n", p->pid, syscall_names[num], p->caps, cap_needed);
+            printf("PID %d: without capability %s (has %d, needs %d)\n", p->pid, syscall_names[num], p->caps, cap_needed);
             p->context->a0 = WITHOUT_CAP;
             return;
         }

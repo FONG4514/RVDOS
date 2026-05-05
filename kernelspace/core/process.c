@@ -17,7 +17,7 @@ struct {
 
 void procinit(void) {
   init_lock(&proc_pool.lock, "proc_pool");
-  proc_pool.next_pid = 1;
+  proc_pool.next_pid = 0;
   
   pcb_cache = kmem_cache_create("PCB", sizeof(PCB));
   if (!pcb_cache) panic("procinit: kmem_cache_create failed");
@@ -50,13 +50,30 @@ PCB* myproc(void) {
 }
 
 int allocpid() {
-  int pid;
+  int pid = -1;
   accquire_lock(&proc_pool.lock);
-  if (proc_pool.next_pid + 1 <= MAXPID + 1) {
-    pid = proc_pool.next_pid++;
-  } else {
-    panic("allocpid: MAXPID");
+
+  int start_scan = proc_pool.next_pid;
+
+  while (1) {
+    proc_pool.next_pid++;
+    
+    if (proc_pool.next_pid > MAXPID) {
+      proc_pool.next_pid = 2; 
+    }
+
+    if (!pid_alive[proc_pool.next_pid]) {
+      pid = proc_pool.next_pid;
+      pid_alive[pid] = 1; 
+      break;
+    }
+
+    if (proc_pool.next_pid == start_scan) {
+      release_lock(&proc_pool.lock);
+      panic("allocpid: system process limit reached (65534 active procs)");
+    }
   }
+
   release_lock(&proc_pool.lock);
   return pid;
 }
