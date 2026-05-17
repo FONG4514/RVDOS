@@ -813,14 +813,19 @@ void FS_CODE fs_ls() {
                 char sz_buf[16];
                 uint32 sz = entry[i].file_size;
                 int k = 0;
-                if (sz == 0) sz_buf[k++] = '0';
-                else {
-                    char temp[16];
-                    int l = 0;
-                    while (sz > 0) { temp[l++] = (sz % 10) + '0'; sz /= 10; }
-                    while (l > 0) sz_buf[k++] = temp[--l];
+                if (entry[i].attr & ATTR_DIRECTORY) {
+                    sz_buf[k++] = 'D';sz_buf[k++] = 'I';sz_buf[k++] = 'R';sz_buf[k++] = '\n'; sz_buf[k] = '\0';
+                }else {
+                    if (sz == 0) sz_buf[k++] = '0';
+                    else {
+                        char temp[16];
+                        int l = 0;
+                        while (sz > 0) { temp[l++] = (sz % 10) + '0'; sz /= 10; }
+                        while (l > 0) sz_buf[k++] = temp[--l];
+                    }
+                    sz_buf[k++] = ' '; sz_buf[k++] = 'b'; sz_buf[k++] = 'y'; sz_buf[k++] = 't'; sz_buf[k++] = 'e'; sz_buf[k++] = 's'; sz_buf[k++] = '\n'; sz_buf[k] = '\0';
                 }
-                sz_buf[k++] = ' '; sz_buf[k++] = 'b'; sz_buf[k++] = 'y'; sz_buf[k++] = 't'; sz_buf[k++] = 'e'; sz_buf[k++] = 's'; sz_buf[k++] = '\n'; sz_buf[k] = '\0';
+                
                 release_lock(&fs_lock);
                 WriteFile(STDOUT, (uint8*)sz_buf, strlen(sz_buf));
                 accquire_lock(&fs_lock);

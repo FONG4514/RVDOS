@@ -51,7 +51,7 @@ void kvminit() {
   kernel_pagetable = (pagetable_t)kalloc();
   for (int i = 0; i < 512; i++) kernel_pagetable[i] = 0;
 
-  extern char etext[], fs_start[], fs_end[], erodata[], trampoline_start[];
+  extern char etext[], fs_start[], fs_end[], erodata[];
 
   // 1. 映射内核代码段 [.text_start, etext)
   // 范围：0x80000000 -> etext
@@ -61,9 +61,7 @@ void kvminit() {
   // 因为你在链接脚本里紧跟在 .text 后面
   mappages(kernel_pagetable, (uint64)fs_start, (uint64)fs_start, (uint64)fs_end - (uint64)fs_start, PTE_R | PTE_W | PTE_X);
 
-  // 3. 映射跳板页相关的中间段 (如果有的话)
-  // 注意：Trampoline 通常在最顶端映射，但物理上它在镜像里也有占位
-  // 如果 fs_end 到 erodata 之间还有东西（比如 .trampoline 在物理内存的占位），也要映射
+  // 3. 映射中间段 (如果有的话)
   if ((uint64)erodata > (uint64)fs_end) {
       mappages(kernel_pagetable, (uint64)fs_end, (uint64)fs_end, (uint64)erodata - (uint64)fs_end, PTE_R);
   }
@@ -80,10 +78,6 @@ void kvminit() {
   mappages(kernel_pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
   mappages(kernel_pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
   mappages(kernel_pagetable, SYSCON, SYSCON, PGSIZE, PTE_R | PTE_W);
-
-  // 6. 映射虚拟地址顶端的 TRAMPOLINE
-  // 这是一个高地址映射，物理地址指向代码镜像里的位置
-  mappages(kernel_pagetable, TRAMPOLINE, (uint64)trampoline_start, PGSIZE, PTE_R | PTE_X);
 }
 
 // Map kernel regions into a user page table.
@@ -102,20 +96,15 @@ void uvmmap_kernel(pagetable_t upgtbl) {
   mappages(upgtbl, SYSCON, SYSCON, PGSIZE, PTE_R | PTE_W);        // SYSCON
 }
 
-// Function to create a user page table and map trampoline/trapframe
+// Function to create a user page table and map trapframe
 pagetable_t uvmcreate(user_context_t *context) {
   pagetable_t pt = (pagetable_t)kalloc();
   if (pt == 0) return 0;
   for (int i = 0; i < 512; i++) pt[i] = 0;
 
-  extern char trampoline_start[];
-  
   // Map kernel parts for fast system calls (no PTE_U)
   uvmmap_kernel(pt);
 
-  // Map trampoline (with PTE_R | PTE_X, usually kept for compatibility)
-  mappages(pt, TRAMPOLINE, (uint64)trampoline_start, PGSIZE, PTE_R | PTE_X);
-  
   // Map trapframe (user context) - S-mode uses this to save/restore registers.
   // We don't give it PTE_U so S-mode can access it without setting sstatus.SUM.
   mappages(pt, TRAPFRAME, (uint64)context, PGSIZE, PTE_R | PTE_W);
@@ -135,9 +124,9 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      continue; // Skip areas where the page table structure itself doesn't exist
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      continue; // Skip pages that are not mapped
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -170,25 +159,27 @@ freewalk(pagetable_t pagetable)
 // Free user memory pages,
 // then free page-table pages.
 void uvmfree(pagetable_t pagetable, uint64 sz) {
-  // 1. 释放用户程序占用的物理内存
-  if(sz > 0)
-    uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
+  // 1. 释放用户程序占用的物理内存 (从 USERBASE 开始)
+  if(sz > USERBASE)
+    uvmunmap(pagetable, USERBASE, (PGROUNDUP(sz) - USERBASE)/PGSIZE, 1);
 
-  // 2. 解除内核镜像和全内存映射 (注意：do_free 必须为 0！否则你会把内核自己给删了)
+  // 2. 释放用户栈 (在 USTACK_TOP 之下的一个页面)
+  uvmunmap(pagetable, USTACK_TOP - PGSIZE, 1, 1);
+
+  // 3. 解除内核镜像和全内存映射 (do_free = 0)
   uvmunmap(pagetable, 0x80000000, (PHYSTOP - 0x80000000)/PGSIZE, 0);
 
-  // 3. 解除 MMIO 映射 (do_free = 0)
+  // 4. 解除 MMIO 映射 (do_free = 0)
   uvmunmap(pagetable, 0x10000000, 1, 0); // UART
   uvmunmap(pagetable, 0x10001000, 1, 0); // VirtIO
   uvmunmap(pagetable, CLINT, 0x10000/PGSIZE, 0);
   uvmunmap(pagetable, PLIC, 0x400000/PGSIZE, 0);
   uvmunmap(pagetable, SYSCON, 1, 0);
 
-  // 4. 解除高地址映射 (do_free = 0)
-  uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+  // 5. 解除高地址映射 (do_free = 0)
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
 
-  // 5. 现在可以安全拆除页表结构了
+  // 6. 现在可以安全拆除页表结构了
   freewalk(pagetable);
 }
 
@@ -202,4 +193,4 @@ void kvminithart() {
   x |= ((uint64)kernel_pagetable >> 12);
   w_satp(x);
   sfence_vma();
-}
+  }

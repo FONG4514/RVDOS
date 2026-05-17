@@ -21,14 +21,6 @@ SECTIONS
     PROVIDE(fs_end = .);
   }
 
-  .trampoline : {
-    . = ALIGN(0x1000);
-    PROVIDE(trampoline_start = .);
-    *(.trampoline)
-    . = ALIGN(0x1000);
-    PROVIDE(trampoline_end = .);
-  }
-
   .rodata : {
     . = ALIGN(0x1000);
     *(.srodata .srodata.*)

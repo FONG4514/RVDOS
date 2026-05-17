@@ -2,7 +2,7 @@
 
 # 配置
 IMG_NAME="fs.img"
-IMG_SIZE_MB=64
+IMG_SIZE_MB=128
 USER_DIR="userspace"
 LIB_DIR="userspace/include"
 BUILD_DIR="build_user"
@@ -47,7 +47,7 @@ for LIB in "${LIBS[@]}"; do
 done
 
 # 定义所有要编译的程序
-PROGRAMS=("shell" "panic" "ls" "bench" "mkdir" "rm" "mv" "cat" "echo" "clear" "poweroff" "reboot" "ps" "loop" "sysinfo" "kill" "sleep" "trace" "sandbox")
+PROGRAMS=("shell" "panic" "ls" "bench" "mkdir" "rm" "mv" "cat" "echo" "clear" "poweroff" "reboot" "ps" "loop" "sysinfo" "kill" "sleep" "trace" "sandbox" "stress")
 
 for PROG in "${PROGRAMS[@]}"; do
     echo "编译 ${PROG}..."

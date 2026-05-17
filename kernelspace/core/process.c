@@ -163,43 +163,52 @@ void scheduler(void) {
 
   c->proc = 0;
   for(;;){
-    // Avoid deadlock by ensuring interrupts are enabled.
+    // 1. 在寻找任务前开启中断，确保可以响应时钟/外设
     intr_on();
 
     PCB *best = 0;
     for(int i = 0; i < MAXPROCESSES; i++) {
       p = procs[i];
+
+      // --- 优化: 锁前探测 (Double-Checked Locking) ---
+      // 先不拿锁，直接看状态。如果不是 RUNNABLE，连锁都不去碰。
+      // 这一步是读取，不会导致缓存行在多核间冲突。
+      if(p->state != RUNNABLE) continue;
+
+      // accquire_lock 内部通常会调用 push_off() 关闭中断
       accquire_lock(&p->lock);
       if(p->state == RUNNABLE) {
         if(best == 0 || p->effective_priority > best->effective_priority) {
           if(best) release_lock(&best->lock);
           best = p;
-          continue; // Keep best locked
+          continue; // 保持 best 的锁，此时中断是关闭的
         } else if (p->effective_priority == best->effective_priority && p->pid < best->pid) {
           if(best) release_lock(&best->lock);
           best = p;
-          continue; // Keep best locked
+          continue; // 保持 best 的锁
         }
       }
       release_lock(&p->lock);
     }
 
+
     if(best) {
-      // best is already locked here
+      // 2. 此时中断已经由于持有 best->lock 而关闭
       p = best;
       p->state = RUNNING;
-      
       c->proc = p;
       
-      // Switch to process's page table
+      // 切换页表
       uint64 satp = (8L << 60) | ((uint64)p->pagetable >> 12);
       w_satp(satp);
       sfence_vma();
 
+      // 执行切换
       swtch(&c->context, &p->sched_ctx);
 
-      // Process is done running for now.
-      // Switch back to kernel page table
+      // --- 进程运行结束回到调度器 ---
+
+      // 切换回内核页表
       w_satp((8L << 60) | ((uint64)kernel_pagetable >> 12));
       sfence_vma();
 
@@ -207,36 +216,35 @@ void scheduler(void) {
       p->cpu_usage++;
 
       if (p->cpu_usage >= 5) {
-          if (p->effective_priority > 1 || p->state == RUNNING)
+          if (p->effective_priority > 1)
               p->effective_priority--;
-
           p->cpu_usage = 0;
       }
       p->skipped_count = 0;
 
-      
+      // 释放锁（此时中断依然是关闭的，直到下一次循环开始的 intr_on）
       release_lock(&p->lock);
 
+      // 动态老化逻辑（可以在关中断下快速完成）
       for (int i = 0; i < MAXPROCESSES; i++) {
           p = procs[i];
           if (p->state == RUNNABLE) {
               accquire_lock(&p->lock);
-
               p->skipped_count++;
-
               if (p->skipped_count >= 5) {
                   if (p->effective_priority < 100)
                       p->effective_priority++;
-
                   p->skipped_count = 0;
               }
-
               if (p->effective_priority < 3)
                 p->effective_priority = 3;
-
               release_lock(&p->lock);
           }
       }
+    } else {
+        // 3. 如果没找到任务，可以执行 wfi (Wait For Interrupt) 降低功耗
+        // 这会让 CPU 挂起，直到下一个中断（如时钟中断）将其唤醒重新扫描
+        asm volatile("wfi");
     }
   }
 }
@@ -384,9 +392,17 @@ int wait(int pid) {
 
       if ((!is_nonblocking && p->pid == pid && is_my_child) || 
           (is_nonblocking && (is_my_child || is_orphan))) {
-        
+
+        // --- 优化: wait 时的锁前探测 ---
+        // 调度器在抢 RUNNABLE，我们在抢 ZOMBIE。
+        // 如果状态不对，绝对不去碰锁，给调度器让路；反之亦然。
+        if(p->state != ZOMBIE) {
+            has_runnable_child = 1;
+            continue;
+        }
+
         accquire_lock(&p->lock);
-        
+
         if (p->state == ZOMBIE) {
 
           // hit the zombie
@@ -407,12 +423,12 @@ int wait(int pid) {
           }
 
           p->state = UNUSED;
-          p->pid = 0;
           p->owner_pid = 0;
           p->killed = 0;
           memset(p->name, 0, sizeof(p->name));
 
-          pid_alive[p->pid] = 0;
+          pid_alive[target_pid] = 0;
+          p->pid = 0;
 
           release_lock(&p->lock);
           release_lock(&proc_pool.lock);
@@ -541,13 +557,17 @@ int spawn(char *path, char *args, uint64 cap) {
   memcpy(p->name, filename, name_len);
   p->name[name_len] = '\0';
 
-  // Allocate one more page for stack
+  // Allocate one more page for stack, placed at USTACK_TOP - PGSIZE
   char *stack = kalloc();
   if (stack) {
       memset(stack, 0, PGSIZE);
-      mappages(p->pagetable, p->sz, (uint64)stack, PGSIZE, PTE_W|PTE_R|PTE_U);
-      p->sz += PGSIZE;
+      // Map stack at USTACK_TOP - PGSIZE
+      uint64 stack_va = USTACK_TOP - PGSIZE;
+      mappages(p->pagetable, stack_va, (uint64)stack, PGSIZE, PTE_W|PTE_R|PTE_U);
       
+      // Note: TRAPFRAME_GUARD is between USTACK_TOP and TRAPFRAME,
+      // and it remains unmapped (no mappages call for it).
+
       // Since kernel is mapped into user space and we use identity mapping for physical memory,
       // we can write to the 'stack' pointer (physical address) directly to set up user stack.
       uint64 sp_offset = PGSIZE; // Start from top of the page
@@ -559,7 +579,7 @@ int spawn(char *path, char *args, uint64 cap) {
       int path_len = strlen(path);
       sp_offset -= (path_len + 1);
       memcpy(stack + sp_offset, path, path_len + 1);
-      uargs[argc++] = (char*)(p->sz - PGSIZE + sp_offset); // Virtual address
+      uargs[argc++] = (char*)(stack_va + sp_offset); // Virtual address
 
       // 2. Parse and copy arguments, and handle redirection
       char *redir_file = 0;
@@ -585,7 +605,7 @@ int spawn(char *path, char *args, uint64 cap) {
               sp_offset -= (len + 1);
               memcpy(stack + sp_offset, start, len);
               stack[sp_offset + len] = '\0';
-              uargs[argc++] = (char*)(p->sz - PGSIZE + sp_offset);
+              uargs[argc++] = (char*)(stack_va + sp_offset);
               if (*s == '>') continue; // Will be handled in next iteration or break
           }
       }
@@ -611,7 +631,7 @@ int spawn(char *path, char *args, uint64 cap) {
       for(int i = 0; i < argc; i++) uargv[i] = (uint64)uargs[i];
       uargv[argc] = 0;
 
-      p->context->sp = p->sz - PGSIZE + sp_offset; // Virtual SP
+      p->context->sp = stack_va + sp_offset; // Virtual SP
       p->context->a0 = argc;
       p->context->a1 = p->context->sp;
   } else {
@@ -716,6 +736,11 @@ int growproc(int n) {
   accquire_lock(&p->lock);
   sz = p->sz;
   if(n > 0){
+    // Boundary check: Heap cannot grow into the stack (at USTACK_TOP - PGSIZE)
+    if (sz + n >= USTACK_TOP - PGSIZE) {
+      release_lock(&p->lock);
+      return -1;
+    }
     for(uint64 a = PGROUNDUP(sz); a < sz + n; a += PGSIZE){
       char *mem = kalloc();
       if(mem == 0){

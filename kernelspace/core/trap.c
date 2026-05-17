@@ -6,7 +6,7 @@ struct trap_info {
 
 extern void kernel_vector();
 extern void user_vector();
-extern void user_ret(uint64, uint64);
+extern void user_ret(uint64);
 extern void fast_user_vector();
 extern int console_read(uint8 *buf, int n);
 extern void uart_putc_no_lock(char c);
@@ -663,9 +663,9 @@ void user_trap_handler() {
         }
     } else {
         // Exception
-        printf("User exception %p, Hart %d, epc %p, tval %p\n", 
-               scause, (int)r_tp(), sepc, r_stval());
-        while(1);
+        printf("PID %d (%s): User exception %p, epc %p, tval %p\n", 
+            p->pid, p->name, scause, sepc,r_stval());
+        exit(-1);
     }
 
     user_trap_return();
@@ -681,8 +681,8 @@ void user_trap_return() {
 
     intr_off();
 
-    // Set stvec to our fast vector (shadow mapped)
-    w_stvec((uint64)fast_user_vector);
+    // Set stvec to our user trap vector
+    w_stvec((uint64)user_vector);
 
     // Set up context for next trap
     p->context->kernel_satp = r_satp();
@@ -697,9 +697,6 @@ void user_trap_return() {
 
     w_sepc(p->context->epc);
 
-    // Using trampoline user_ret to perform actual return
-    // We don't need to switch satp because kernel is mapped in user's page table.
-    // The scheduler switched to p->pagetable.
-    uint64 fn = TRAMPOLINE + ((uint64)user_ret - (uint64)user_vector);
-    ((void (*)(uint64))fn)(TRAPFRAME);
+    // Directly call user_ret. Since kernel is shadow mapped, we can jump to it from user page table.
+    user_ret(TRAPFRAME);
 }

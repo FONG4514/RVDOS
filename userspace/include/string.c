@@ -30,3 +30,16 @@ void* memset(void *s, int c, uint32 n) {
   }
   return s;
 }
+
+char* strcpy(char *s, const char *t) {
+  char *os = s;
+  while((*s++ = *t++) != 0);
+  return os;
+}
+
+char* strcat(char *s, const char *t) {
+  char *os = s;
+  while(*s) s++;
+  while((*s++ = *t++) != 0);
+  return os;
+}

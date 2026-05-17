@@ -41,64 +41,6 @@ timervec:
     
     mret
 
-# --- Fast User Trap Vector (No satp switch) ---
-# This is used because kernel pages are shadow-mapped into user page table (no PTE_U).
-.align 4
-fast_user_vector:
-    # 1. Save user a0 to sscratch
-    csrw sscratch, a0
-    
-    # 2. Load TRAPFRAME address (mapped in user page table)
-    li a0, TRAPFRAME
-
-    # 3. Save user registers to TRAPFRAME
-    sd ra, 40(a0)
-    sd sp, 48(a0)
-    sd gp, 56(a0)
-    sd tp, 64(a0)
-    sd t0, 72(a0)
-    sd t1, 80(a0)
-    sd t2, 88(a0)
-    sd s0, 96(a0)
-    sd s1, 104(a0)
-    sd a1, 120(a0)
-    sd a2, 128(a0)
-    sd a3, 136(a0)
-    sd a4, 144(a0)
-    sd a5, 152(a0)
-    sd a6, 160(a0)
-    sd a7, 168(a0)
-    sd s2, 176(a0)
-    sd s3, 184(a0)
-    sd s4, 192(a0)
-    sd s5, 200(a0)
-    sd s6, 208(a0)
-    sd s7, 216(a0)
-    sd s8, 224(a0)
-    sd s9, 232(a0)
-    sd s10, 240(a0)
-    sd s11, 248(a0)
-    sd t3, 256(a0)
-    sd t4, 264(a0)
-    sd t5, 272(a0)
-    sd t6, 280(a0)
-
-    # 4. Restore original a0 from sscratch and save to TRAPFRAME
-    csrr t0, sscratch
-    sd t0, 112(a0)
-
-    # 5. Save EPC
-    csrr t1, sepc
-    sd t1, 24(a0)
-
-    # 6. Load kernel environment (tp, sp, and C handler)
-    ld tp, 32(a0)      # hartid
-    ld sp, 8(a0)       # kernel stack
-    ld t0, 16(a0)      # user_trap_handler address
-
-    # 7. Jump to C handler (already mapped in current page table)
-    jr t0
-
 # --- 内核 Trap 向量 ---
 .align 4
 kernel_vector:
@@ -210,10 +152,8 @@ swtch:
 
     ret
 
-# --- 用户 Trap 向量 (Trampoline 页面) ---
-.section .trampoline
+# --- 用户 Trap 向量 ---
 .align 4
-
 user_vector:
     # 1. 暂存用户 a0 到 sscratch，腾出 a0 寄存器
     csrw sscratch, a0
@@ -261,22 +201,20 @@ user_vector:
     csrr t1, sepc
     sd t1, 24(a0)
 
-    # 5. 载入内核环境 (这些值由内核在进程初始化时填入 Trapframe)
-    ld tp, 32(a0)      # hartid / thread pointer
+    # 5. 载入内核环境
+    ld tp, 32(a0)      # hartid
     ld sp, 8(a0)       # 内核栈指针
     ld t0, 16(a0)      # usertrap() C 函数地址
 
-    # 6. 跳转到内核处理函数 (不再切换 satp)
+    # 6. 跳转到内核处理函数
     jr t0
 
 # --- 从内核返回用户态 ---
 .globl user_ret
+.align 4
 user_ret:
-    # a0: Trapframe 指针 (通常在内核态通过参数传入)
+    # a0: Trapframe 指针
     
-    # 此时我们仍在 Trampoline 页面（在两套页表中都映射在同一位置）
-    li a0, TRAPFRAME
-
     # 1. 恢复 EPC
     ld t1, 24(a0)
     csrw sepc, t1
@@ -313,7 +251,7 @@ user_ret:
     ld t5, 272(a0)
     ld t6, 280(a0)
 
-    # 3. 最后恢复 a0 (通过 Trapframe 中的记录)
+    # 3. 最后恢复 a0
     ld a0, 112(a0)
     
     # 4. 返回用户态

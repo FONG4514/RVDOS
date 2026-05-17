@@ -27,9 +27,11 @@
 
 // 虚拟地址空间布局
 #define MAXVA (1L << 38)
-#define TRAMPOLINE (MAXVA - PGSIZE)
-#define TRAPFRAME (TRAMPOLINE - PGSIZE)
+#define TRAPFRAME (MAXVA - PGSIZE)
+#define TRAPFRAME_GUARD (TRAPFRAME - PGSIZE)  // 保护页，不映射
+#define USTACK_TOP TRAPFRAME_GUARD             // 用户栈顶
 #define PHYSTOP (0x80000000L + 128*1024*1024)
+#define USERBASE PHYSTOP                       // 用户程序基地址
 // --- PLIC (Platform Level Interrupt Controller) ---
 #define PLIC 0x0c000000L
 #define SYSCON 0x100000L
