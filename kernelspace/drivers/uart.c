@@ -1,5 +1,6 @@
 #include <stdarg.h>
 #include <kernel.h>
+#include <sbi.h>
 
 #define UART0 0x10000000L
 #define REG(reg) ((volatile unsigned char *)(UART0 + reg))
@@ -21,7 +22,6 @@
 spinlock_t uart_lock;
 int uart_inited = 0;
 
-#define INPUT_BUF_SIZE 128
 struct {
   spinlock_t lock;
   char buf[INPUT_BUF_SIZE];
@@ -56,13 +56,21 @@ void uart_init() {
   // enable receive interrupts.
   *REG(IER) = 0x01;
 
+  // enable interrupts by setting OUT2 in MCR
+  *REG(MCR) = 0x08;
+
   uart_inited = 1;
 }
 
 void uart_putc_no_lock(char c) {
-  while((*REG(LSR) & LSR_TX_IDLE) == 0)
-    ;
-  *REG(THR) = c;
+  if (uart_inited) {
+    while((*REG(LSR) & LSR_TX_IDLE) == 0)
+      ;
+    *REG(THR) = c;
+  } else {
+    // If UART is not initialized, use SBI
+    sbi_console_putchar(c);
+  }
 }
 
 void uart_putc(char c) {
@@ -80,7 +88,7 @@ void uart_puts(char *s) {
 // Read one character from the UART.
 // Returns -1 if no character is available.
 int uart_getc() {
-  if((*REG(LSR) & LSR_RX_READY) != 0){
+  if(uart_inited && (*REG(LSR) & LSR_RX_READY) != 0){
     return *REG(RHR);
   } else {
     return -1;

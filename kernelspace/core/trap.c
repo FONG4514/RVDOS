@@ -1,4 +1,5 @@
 #include <kernel.h>
+#include <sbi.h>
 
 struct trap_info {
     spinlock_t trap_lock;
@@ -18,6 +19,7 @@ extern struct kmem_cache *file_cache;
 
 uint64 ticks = 0;
 spinlock_t tick_lock;
+extern int primary_hart;
 
 // --- Interrupt Handling Table ---
 
@@ -28,6 +30,7 @@ typedef void (*interrupt_handler_t)(void);
 
 interrupt_handler_t interrupt_table[16] = {
     [1] = handle_timer,    // Supervisor Software Interrupt (delegated timer)
+    [5] = handle_timer,    // Supervisor Timer Interrupt (SBI timer)
     [9] = handle_external, // Supervisor External Interrupt (PLIC)
 };
 
@@ -39,8 +42,9 @@ void handle_timer() {
     // if (ticks % 100 == 0) printf("Hart %d: tick %d\n", (int)r_tp(), (int)ticks);
     release_lock(&tick_lock);
 
-    // Clear Supervisor Software Interrupt Pending (SSIP)
-    w_sip(r_sip() & ~2);
+    // SBI模式：设置下一个定时器中断
+    uint64 interval = 1000000;
+    sbi_set_timer(r_time() + interval);
 }
 
 void handle_external() {
@@ -244,19 +248,23 @@ uint64 sys_panic (void) {
 
 uint64 sys_poweroff(void) {
     printf("Powering off...\n");
-    kmem_cache_destroy(pcb_cache);
-    kmem_cache_destroy(file_cache);
-    // RISC-V Virt machine syscon poweroff
+    if (pcb_cache) kmem_cache_destroy(pcb_cache);
+    if (file_cache) kmem_cache_destroy(file_cache);
+    sbi_system_reset(SBI_SRST_RESET_TYPE_SHUTDOWN, SBI_SRST_RESET_REASON_NONE);
+    // Fallback for QEMU virt test device
     *(uint32*)SYSCON = 0x5555;
+    while(1);
     return 0;
 }
 
 uint64 sys_reboot(void) {
     printf("Rebooting...\n");
-    kmem_cache_destroy(pcb_cache);
-    kmem_cache_destroy(file_cache);
-    // RISC-V Virt machine syscon reboot
+    if (pcb_cache) kmem_cache_destroy(pcb_cache);
+    if (file_cache) kmem_cache_destroy(file_cache);
+    sbi_system_reset(SBI_SRST_RESET_TYPE_COLD_REBOOT, SBI_SRST_RESET_REASON_NONE);
+    // Fallback for QEMU virt test device
     *(uint32*)SYSCON = 0x7777;
+    while(1);
     return 0;
 }
 
@@ -585,7 +593,7 @@ void syscall_dispatcher(void) {
         p->context->a0 = syscall_table[num]();
 
         if (p->tracing) {
-            printf("PID %d: syscall %s(0x%x) -> %d\n", p->pid, syscall_names[num], arg0, p->context->a0);
+            printf("PID %d: syscall %s(0x%x) -> %d\n", p->pid, syscall_names[num], arg0, (int)p->context->a0);
         }
     } else {
         printf("Unknown syscall %d on Hart %d at EPC %p\n", (int)num, (int)r_tp(), p->context->epc);
@@ -596,12 +604,11 @@ void syscall_dispatcher(void) {
 // --- Trap Initialization ---
 
 void xsmode_trap_init() {
-    if (r_tp() == 0) {
+    if (r_tp() == primary_hart) {
         init_lock(&info.trap_lock, "trap_lock");
         init_lock(&tick_lock, "tick_lock");
-        plic_init();
     }
-    plic_inithart();
+    // PLIC 已在 main.c 中初始化
     // Initially, we are in kernel, so set stvec to kernel_vector
     w_stvec((uint64)kernel_vector);
 }
@@ -657,7 +664,8 @@ void user_trap_handler() {
         uint64 which_int = scause & 0xfff;
         if (which_int < 16 && interrupt_table[which_int]) {
             interrupt_table[which_int]();
-            if (which_int == 1 && p->state == RUNNING) {
+            // SBI模式下定时器中断号为5，触发时间片抢占
+            if (which_int == 5 && p->state == RUNNING) {
                 yield();
             }
         }

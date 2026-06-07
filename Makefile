@@ -51,17 +51,19 @@ clean:
 	find $(K) -name "*.o" -delete
 	rm -f kernel.elf kernel.asm
 
-# --- 运行 ---
-QEMU_OPTS = -machine virt -bios none -kernel kernel.elf -m 128M -smp 2 \
-            -nographic -serial mon:stdio \
-            -drive file=fs.img,if=none,format=raw,id=x0 \
-            -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 
+# --- 运行配置 ---
+QEMU = qemu-system-riscv64
+QEMU_COMMON_OPTS = -machine virt -m 128M -smp 2 \
+                   -nographic -serial mon:stdio \
+                   -drive file=fs.img,if=none,format=raw,id=x0 \
+                   -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
+# 2. SBI 模式 (Supervisor Mode, 通过 OpenSBI 启动)
 run: kernel.elf
-	qemu-system-riscv64 $(QEMU_OPTS)
+	$(QEMU) $(QEMU_COMMON_OPTS) -kernel kernel.elf
 
 debug_s: kernel.elf
-	qemu-system-riscv64 $(QEMU_OPTS) -S -gdb tcp::1234
+	$(QEMU) $(QEMU_COMMON_OPTS) -kernel kernel.elf -S -gdb tcp::1234
 
 debug_c: kernel.elf
 	$(GDB) kernel.elf -ex "target remote :1234"

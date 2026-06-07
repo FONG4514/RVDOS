@@ -3,43 +3,10 @@
 .globl kernel_vector
 .globl user_vector
 .globl user_ret
-.globl timervec
 .globl fast_user_vector
 .globl swtch
 
 .section .text
-
-# --- Machine Mode Timer Trap Vector ---
-.align 4
-timervec:
-    # machine_trap_handler expects sscratch to point to a scratch area
-    # scratch[0..2] : space to save a0, a1, a2
-    csrrw a0, mscratch, a0
-    sd a1, 0(a0)
-    sd a2, 8(a0)
-    sd a3, 16(a0)
-
-    # 1. Clear SSIP logic would go here if we weren't just delegating
-    # But we want to set SSIP (bit 1 of mip)
-    li a1, 2
-    csrs mip, a1
-
-    # 2. Schedule next interrupt
-    # scratch[3] has CLINT_MTIMECMP(hartid)
-    # scratch[4] has interval
-    ld a1, 24(a0) # CLINT_MTIMECMP
-    ld a2, 32(a0) # interval
-    ld a3, 0(a1)  # current MTIMECMP
-    add a3, a3, a2
-    sd a3, 0(a1)
-
-    # Restore registers
-    ld a1, 0(a0)
-    ld a2, 8(a0)
-    ld a3, 16(a0)
-    csrrw a0, mscratch, a0
-    
-    mret
 
 # --- 内核 Trap 向量 ---
 .align 4

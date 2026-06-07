@@ -234,6 +234,12 @@ static inline uint64 r_tp() {
   return x;
 }
 
+static inline uint64 r_time() {
+  uint64 x;
+  asm volatile("csrr %0, time" : "=r" (x));
+  return x;
+}
+
 static inline uint64 r_sp() {
   uint64 x;
   asm volatile("mv %0, sp" : "=r" (x));
