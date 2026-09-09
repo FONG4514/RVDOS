@@ -687,8 +687,10 @@ bad:
 
 // Set up first user process.
 void userinit(void) {
-  if (spawn("shell", 0,KERNEL_ABI_INFO.caps) < 0) {
-    panic("userinit: failed to spawn shell");
+  // Boot into syscontroller (init). On-disk name is 8.3: "sysctl".
+  // Default mode is "normal"; pass "maint" for maintenance shell with CAP_SYS_POWER.
+  if (spawn("sysctl", "normal", CAP_PROFILE_SYSCONTROLLER) < 0) {
+    panic("userinit: failed to spawn syscontroller");
   }
 }
 

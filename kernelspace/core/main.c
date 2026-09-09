@@ -41,9 +41,7 @@ int is_sbi = 1;  // 仅支持SBI模式
 
 const rvdos_abi_info_t KERNEL_ABI_INFO = {
     .abi_version = RVDOS_ABI_VER,
-    .caps = CAP_FS_READ | CAP_FS_WRITE | CAP_FS_DIR | CAP_FS_CWD | CAP_FS_RENAME |
-            CAP_PROC_BASIC | CAP_MEM_SBRK | CAP_SYS_TIME | CAP_PROC_PS | CAP_SYS_POWER | CAP_PROC_KILL | CAP_PROC_SLEEP | CAP_PROC_TRACE |
-            CAP_PROC_SANDBOX
+    .caps = CAP_ALL
 };
 
 void sbi_timer_init() {

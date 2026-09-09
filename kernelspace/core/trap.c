@@ -167,43 +167,86 @@ uint64 sys_get_ticks(void) {
     return ticks;
 }
 
+// Forward decl (defined below with syscall table)
+int has_capability(PCB *p, uint64 cap);
+
+// Copy a NUL-terminated user string of at most max-1 bytes into kbuf.
+// Returns 0 on success, -1 if path is NULL.
+static int copy_user_str(char *kbuf, char *upath, int max) {
+    int i;
+    if (upath == 0) return -1;
+    uint64 old_sstatus = r_sstatus();
+    w_sstatus(old_sstatus | SSTATUS_SUM);
+    for (i = 0; i < max - 1; i++) {
+        kbuf[i] = upath[i];
+        if (kbuf[i] == '\0') break;
+    }
+    kbuf[i] = '\0';
+    w_sstatus(old_sstatus);
+    return 0;
+}
+
+// Resolve child capabilities. Always enforces child ⊆ parent.
+// custom=0 → USER_DEFAULT ∩ parent
+// custom=1 → requires CAP_PROC_SANDBOX; mask ∩ parent (PROC_CAP_ENABLE cleared)
+static int resolve_child_caps(PCB *p, uint64 mask, int custom, uint64 *out) {
+    if (custom) {
+        if (!has_capability(p, CAP_PROC_SANDBOX))
+            return -1;
+        *out = p->caps & (mask & ~PROC_CAP_ENABLE);
+    } else {
+        *out = p->caps & CAP_PROFILE_USER_DEFAULT;
+    }
+    return 0;
+}
+
 uint64 sys_spawn(void) {
     PCB *p = myproc();
     char *path = (char*)p->context->a0;
     char *redir = (char*)p->context->a1;
     uint64 mask = p->context->a2;
     uint64 child_cap = 0;
+    int custom = (mask & PROC_CAP_ENABLE) != 0;
 
-    if (mask & (1ULL << 63)) {
-        child_cap = p->caps & (mask & ~(1ULL << 63));
-    } else {
-        child_cap = p->caps;
-    }
+    if (resolve_child_caps(p, mask, custom, &child_cap) < 0)
+        return (uint64)WITHOUT_CAP;
 
     if (path == 0) return -1;
 
     char kpath[64];
     char kredir[64];
-    uint64 old_sstatus = r_sstatus();
-    w_sstatus(old_sstatus | SSTATUS_SUM);
-    
-    int i;
-    for(i = 0; i < 63; i++) {
-        kpath[i] = path[i];
-        if(kpath[i] == '\0') break;
-    }
-    kpath[i] = '\0';
+    if (copy_user_str(kpath, path, 64) < 0) return -1;
 
     if (redir) {
-        for(i = 0; i < 63; i++) {
-            kredir[i] = redir[i];
-            if(kredir[i] == '\0') break;
-        }
-        kredir[i] = '\0';
+        if (copy_user_str(kredir, redir, 64) < 0) return -1;
+        return spawn(kpath, kredir, child_cap);
     }
-    
-    w_sstatus(old_sstatus);
-    return spawn(kpath, redir ? kredir : 0,child_cap);
+    return spawn(kpath, 0, child_cap);
+}
+
+// SYS_SANDBOX: spawn with an explicit capability mask (always custom).
+// a0=path, a1=args, a2=requested_caps (PROC_CAP_ENABLE optional/ignored)
+uint64 sys_sandbox(void) {
+    PCB *p = myproc();
+    char *path = (char*)p->context->a0;
+    char *redir = (char*)p->context->a1;
+    uint64 mask = p->context->a2;
+    uint64 child_cap = 0;
+
+    if (resolve_child_caps(p, mask, 1, &child_cap) < 0)
+        return (uint64)WITHOUT_CAP;
+
+    if (path == 0) return -1;
+
+    char kpath[64];
+    char kredir[64];
+    if (copy_user_str(kpath, path, 64) < 0) return -1;
+
+    if (redir) {
+        if (copy_user_str(kredir, redir, 64) < 0) return -1;
+        return spawn(kpath, kredir, child_cap);
+    }
+    return spawn(kpath, 0, child_cap);
 }
 
 uint64 sys_wait(void) {
@@ -528,7 +571,8 @@ uint64 syscall_caps[64] = {
     [SYS_SBRK]         = CAP_MEM_SBRK,
     [SYS_KILL]         = CAP_PROC_KILL,
     [SYS_SLEEP]        = CAP_PROC_SLEEP,
-    [SYS_TRACE]        = CAP_PROC_TRACE
+    [SYS_TRACE]        = CAP_PROC_TRACE,
+    [SYS_SANDBOX]      = CAP_PROC_BASIC | CAP_PROC_SANDBOX
 };
 
 const char *syscall_names[64] = {
@@ -559,10 +603,10 @@ const char *syscall_names[64] = {
     [SYS_KILL]         = "kill",
     [SYS_SLEEP]        = "sleep",
     [SYS_TRACE]        = "trace",
+    [SYS_SANDBOX]      = "sandbox",
 };
 
 // System call table
-// You can expand this by adding entries like [SYS_READ] = sys_read,
 syscall_t syscall_table[64] = {
     [SYS_GET_ABI_INFO] = sys_get_abi_info,
     [SYS_GETCAPS]      = sys_getcaps,
@@ -590,7 +634,8 @@ syscall_t syscall_table[64] = {
     [SYS_SBRK]         = sys_sbrk,
     [SYS_KILL]         = sys_kill,
     [SYS_SLEEP]        = sys_sleep,
-    [SYS_TRACE]        = sys_trace
+    [SYS_TRACE]        = sys_trace,
+    [SYS_SANDBOX]      = sys_sandbox
 };
 
 void syscall_dispatcher(void) {

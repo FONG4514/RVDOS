@@ -31,6 +31,6 @@
 #define MAX_HANDLES 64
 #define INPUT_BUF_SIZE 128
 
-#define KERNEL_VERSION "Alpha-0.8.0-Stable"
+#define KERNEL_VERSION "Alpha-0.8.1"
 
 #endif

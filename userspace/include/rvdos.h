@@ -8,7 +8,7 @@
 
 pid_t    get_pid(void);
 pid_t    spawn_process(const char *path, const char *args);
-pid_t    sandbox(const char *path, const char *args,uint64 cap);
+pid_t    sandbox(const char *path, const char *args, uint64 cap);
 int32    wait_process(pid_t pid);
 int32    kill_process(pid_t pid);
 void     exit_process(int32 status);
@@ -31,7 +31,7 @@ void* sbrk(int n);
 
 // Capability
 int32    get_abi_info(rvdos_abi_info_t *info);
-uint32   get_caps(void);
+uint64   get_caps(void);
 int32    get_version(char *buf, uint32 len);
 
 uint32   get_ticks(void);

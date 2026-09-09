@@ -17,7 +17,7 @@ int main() {
     }
 
     printf("ABI Version: %d\n", info.abi_version);
-    printf("Supported Capabilities:\n");
+    printf("Kernel Supported Capabilities:\n");
 
     printf("[%s] FS_READ\n", (info.caps & CAP_FS_READ) ? "X" : " ");
     printf("[%s] FS_WRITE\n", (info.caps & CAP_FS_WRITE) ? "X" : " ");
@@ -33,6 +33,12 @@ int main() {
     printf("[%s] MEM_SBRK\n", (info.caps & CAP_MEM_SBRK) ? "X" : " ");
     printf("[%s] SYS_TIME\n", (info.caps & CAP_SYS_TIME) ? "X" : " ");
     printf("[%s] SYS_POWER\n", (info.caps & CAP_SYS_POWER) ? "X" : " ");
+
+    uint64 my = get_caps();
+    printf("\nThis process caps: %x\n", my);
+    printf("  POWER=%d SANDBOX=%d PS=%d KILL=%d\n",
+           !!(my & CAP_SYS_POWER), !!(my & CAP_PROC_SANDBOX),
+           !!(my & CAP_PROC_PS), !!(my & CAP_PROC_KILL));
 
     return 0;
 }

@@ -47,7 +47,7 @@ for LIB in "${LIBS[@]}"; do
 done
 
 # 定义所有要编译的程序
-PROGRAMS=("shell" "panic" "ls" "bench" "mkdir" "rm" "mv" "cat" "echo" "clear" "poweroff" "reboot" "ps" "loop" "sysinfo" "kill" "sleep" "trace" "sandbox" "stress")
+PROGRAMS=("syscontroller" "shell" "panic" "ls" "bench" "mkdir" "rm" "mv" "cat" "echo" "clear" "poweroff" "reboot" "ps" "loop" "sysinfo" "kill" "sleep" "trace" "sandbox" "stress")
 
 for PROG in "${PROGRAMS[@]}"; do
     echo "编译 ${PROG}..."
@@ -64,12 +64,14 @@ echo "正在将文件存入镜像..."
 echo "Hello from RVDOS File System!" > ${BUILD_DIR}/README.TXT
 echo "Persistence Test File - Overwrite me!" > ${BUILD_DIR}/TEST.TXT
 
-# shell 放在根目录，作为入口
+# syscontroller 源码编译为 syscontroller.elf，写入镜像时用 8.3 名 sysctl
+# （FAT32 实现不支持长文件名；内核 userinit 查找 "sysctl"）
+mcopy -i ${IMG_NAME} ${BUILD_DIR}/syscontroller.elf ::/sysctl
 mcopy -i ${IMG_NAME} ${BUILD_DIR}/shell.elf ::/shell
 
 # 其他工具放在 /usr/
 for PROG in "${PROGRAMS[@]}"; do
-    if [ "$PROG" != "shell" ]; then
+    if [ "$PROG" != "shell" ] && [ "$PROG" != "syscontroller" ]; then
         mcopy -i ${IMG_NAME} ${BUILD_DIR}/${PROG}.elf ::/usr/${PROG}
     fi
 done

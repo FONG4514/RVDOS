@@ -56,8 +56,8 @@ pid_t spawn_process(const char *path, const char *args) {
     return (pid_t)syscall(SYS_SPAWN, (uint64)path, (uint64)args, 0);
 }
 
-pid_t sandbox(const char *path, const char *args,uint64 cap) {
-    return (pid_t)syscall(SYS_SPAWN, (uint64)path, (uint64)args, cap);
+pid_t sandbox(const char *path, const char *args, uint64 cap) {
+    return (pid_t)syscall(SYS_SANDBOX, (uint64)path, (uint64)args, cap);
 }
 
 int32 wait_process(pid_t pid) {
@@ -116,8 +116,8 @@ int32 get_abi_info(rvdos_abi_info_t *info) {
     return (int32)syscall(SYS_GET_ABI_INFO, 0, (uint64)info, 0);
 }
 
-uint32 get_caps(void) {
-    return (uint32)syscall(SYS_GETCAPS, 0, 0, 0);
+uint64 get_caps(void) {
+    return (uint64)syscall(SYS_GETCAPS, 0, 0, 0);
 }
 
 void* sbrk(int n) {
